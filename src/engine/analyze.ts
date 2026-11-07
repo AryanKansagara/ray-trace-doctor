@@ -464,6 +464,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       for (const w of consumerWorkers) {
         const iv = busyIntervals[w.worker]
         for (let k = 1; k + 1 < iv.length; k += 2) if (iv[k + 1] - iv[k] >= minGap) gaps.push(w.worker, iv[k], iv[k + 1])
+        if (consumer.last - iv[iv.length - 1] >= minGap) gaps.push(w.worker, iv[iv.length - 1], consumer.last)
       }
       push({
         kind: 'starved-stage',
