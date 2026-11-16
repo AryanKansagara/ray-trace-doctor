@@ -90,6 +90,7 @@ export interface Sample {
 const REAL = 'Real Ray 2.60 trace, synthetic workload'
 export const SAMPLES: Sample[] = [
   { id: 'gpu_starved', name: 'GPU actor starved by CPU preprocessing', file: '/samples/gpu_starved.json.gz', blurb: 'Ray Data pipeline: 2 preprocess workers feeding 4 GPU actors.', provenance: `${REAL}, logical GPUs`, pair: 'gpu_fixed' },
+  { id: 'retries', name: 'Flaky reads retried by Ray', file: '/samples/retries.json.gz', blurb: 'A third of 24 load tasks time out twice before succeeding.', provenance: REAL },
   { id: 'skew', name: 'Data skew with stragglers', file: '/samples/skew.json.gz', blurb: 'Shard processing with a heavy tail and a few pathological keys.', provenance: REAL },
   { id: 'small', name: 'Too-small tasks', file: '/samples/small.json.gz', blurb: '6,000 sub-millisecond tasks, one per row.', provenance: REAL, pair: 'small_fixed' },
 ]

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { gzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import { TraceParser, parseStream } from './parse.ts'
 import { buildTrace, describeType, parseTaskId } from './build.ts'
 import { analyze, quantile, type Analysis } from './analyze.ts'
@@ -320,4 +320,69 @@ test('share URL holds settings only, and hostile input is dropped', () => {
   assert.equal(decodeSettings('#s=!!!'), null)
   assert.deepEqual(sanitize({ gpusPerWorker: -1, slots: 'x', evil: 1, trace: [1, 2] }), DEFAULTS)
   assert.ok(!('trace' in (sanitize({ trace: [1] }) as object)))
+})
+
+// ---------- Retries and nested tasks, from real Ray 2.60 traces made by scripts/gen_traces.py ----------
+
+test('real retries trace: Ray 2.60 writes no attempt number, so retries come from repeated task IDs', async () => {
+  const { trace } = await load(fixture('ray-2.60-retries.json'))
+  assert.equal(trace.n, 40)
+  assert.equal(new Set(trace.taskIds).size, 24)
+  assert.equal(trace.issues.find((i) => i.code === 'retries')?.count, 8)
+  // Failed attempts never reach store_outputs; the last attempt of each task does.
+  assert.equal(trace.issues.find((i) => i.code === 'no-store')?.count, 16)
+})
+
+test('real retries trace: failed attempts are diagnosed with the time they threw away', async () => {
+  const { trace, a } = await load(fixture('ray-2.60-retries.json'))
+  const d = a.diagnoses.find((x) => x.kind === 'failed-attempts')
+  assert.ok(d)
+  // Hand count from the raw JSON: every attempt but the last per task ID.
+  assert.ok(Math.abs(d.lostWorkerSeconds - 6.65057) < 1e-3, String(d.lostWorkerSeconds))
+  assert.equal(d.spans.length, 16)
+  for (const i of d.spans) assert.equal(trace.store[i], 0)
+  assert.match(d.evidence[0], /16 failed attempts across 8 tasks/)
+  assert.ok(d.saved.low <= d.saved.high && d.saved.high <= a.summary.jobSeconds)
+})
+
+test('no failed-attempts diagnosis on real traces without retries', async () => {
+  for (const f of ['skew', 'small', 'gpu_starved']) {
+    const { a } = await load(gunzipSync(sample(f)))
+    assert.ok(!kinds(a).includes('failed-attempts'), f)
+  }
+})
+
+test('hand-built retry: only the earlier attempt counts as lost', async () => {
+  const events = [
+    ...task('load', 'worker:a', 0, 2_000_000, 1, 0, 0).filter((e) => e.cat !== 'task:store_outputs'),
+    ...task('load', 'worker:a', 2_100_000, 1_000_000, 1, 0, 10_000),
+    ...task('load', 'worker:b', 0, 3_000_000, 2, 0, 10_000),
+  ]
+  const { a } = await load(asBytes(events))
+  const d = a.diagnoses.find((x) => x.kind === 'failed-attempts')
+  assert.ok(d)
+  assert.ok(Math.abs(d.lostWorkerSeconds - 2) < 1e-9)
+  assert.equal(d.spans.length, 1)
+})
+
+test('real nested trace: parents that submit sub-tasks are flagged, with their time', async () => {
+  const { trace } = await load(fixture('ray-2.60-nested.json'))
+  const issue = trace.issues.find((i) => i.code === 'nested-tasks')
+  assert.equal(issue?.count, 4)
+  assert.match(issue!.message, /4\.9 s of task time/)
+})
+
+test('nested detection: Ray Data actor constructors and the driver do not count', async () => {
+  for (const f of ['gpu_starved', 'gpu_fixed', 'skew']) {
+    const { trace } = await load(gunzipSync(sample(f)))
+    assert.ok(!trace.issues.some((i) => i.code === 'nested-tasks'), f)
+  }
+})
+
+test('nested detection: a submit inside the span flags it, one after the span does not', async () => {
+  const sub = (tid: string, ts: number) => ({ cat: 'submit_task', name: 'submit_task', pid: '10.0.0.1', tid, ts, dur: 100, ph: 'X', args: {} })
+  const inside = await load(asBytes([...task('parent', 'worker:p', 0, 1_000_000, 1), sub('worker:p', 500_000)]))
+  assert.equal(inside.trace.issues.find((i) => i.code === 'nested-tasks')?.count, 1)
+  const after = await load(asBytes([...task('parent', 'worker:p', 0, 1_000_000, 1), sub('worker:p', 1_500_000)]))
+  assert.ok(!after.trace.issues.some((i) => i.code === 'nested-tasks'))
 })

@@ -71,7 +71,7 @@ export function reportHtml(trace: Trace, a: Analysis, settings: Settings, appUrl
 <p>${esc(d.summary)}</p><ul>${d.evidence.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>
 <p class="num"><b>${fmtS(d.lostWorkerSeconds)}</b> lost worker time. ${est}.</p>
 <p class="how">${esc(d.savedHow)}</p>
-<p><strong>Try:</strong> ${esc(d.suggestion)}</p>
+<p><strong>Try:</strong> ${esc(d.suggestion).replace(/`([^`]*)`/g, '<code>$1</code>')}</p>
 ${d.code ? `<pre>${esc(d.code)}</pre>` : ''}
 ${d.inferred.length ? `<p class="inf"><strong>Inferred:</strong> ${d.inferred.map(esc).join(' ')}</p>` : ''}
 ${d.docUrl ? `<p><a href="${esc(d.docUrl)}">Ray docs</a></p>` : ''}</article>`

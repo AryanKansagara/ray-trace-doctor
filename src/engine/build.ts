@@ -272,7 +272,34 @@ export function buildTrace(raw: Raw, name = 'trace', onlyJob?: string): Trace {
   if (badIds) add('bad-task-id', 'warning', 'Task IDs are not 48 hex characters, so actor and job could not be derived from them.', badIds)
   let retried = 0
   for (const v of attemptsById.values()) if (v > 1) retried++
-  if (retried) add('retries', 'info', 'Tasks ran more than once (retries). Each attempt counts as its own span.', retried)
+  if (retried) add('retries', 'info', 'Tasks ran more than once (retries). Each attempt counts as its own span; the time lost to failed attempts is a diagnosis of its own.', retried)
+  // A task whose own worker submits tasks while it runs is a nested parent. If it then waits in ray.get,
+  // Ray lends its CPU to the children, so its span counts as busy here although it mostly waited.
+  const subsByWorker = new Map<number, number[]>()
+  for (let i = 0; i < submits.length; i++) {
+    const l = subsByWorker.get(submitWorker[i])
+    if (l) l.push(submits[i])
+    else subsByWorker.set(submitWorker[i], [submits[i]])
+  }
+  let nested = 0
+  let nestedSeconds = 0
+  for (let i = 0; i < n; i++) {
+    const times = subsByWorker.get(out.worker[i])
+    const ty = types[out.type[i]]
+    if (!times || ty.system || ty.lifecycle) continue // actor constructors make one-off internal calls
+    let lo = 0
+    let hi = times.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (times[mid] < out.start[i]) lo = mid + 1
+      else hi = mid
+    }
+    if (lo < times.length && times[lo] <= out.start[i] + out.dur[i]) {
+      nested++
+      nestedSeconds += out.dur[i]
+    }
+  }
+  if (nested) add('nested-tasks', 'info', `Tasks submitted their own sub-tasks while running (${nestedSeconds.toFixed(1)} s of task time). If they wait on them with ray.get, Ray frees their CPU, so that time counts as busy here and the inferred slot count can be higher than your real CPUs. Set the real slot count in settings.`, nested)
   if (idleSpans) add('worker-idle-spans', 'info', '`worker_idle` spans present. They are not counted as busy; idle time is measured from gaps between task spans.', idleSpans)
   for (const [cat, c] of Object.entries(raw.otherCats)) add(`other-${cat}`, 'info', `Spans in category "${cat}" (for example ray.profile) are not task phases and were not analyzed.`, c)
   if (total >= 99_000 && total <= 101_000) add('gcs-cap', 'warning', `About ${total.toLocaleString('en-US')} tasks: suspiciously close to Ray's default GCS cap on stored task events (RAY_task_events_max_num_task_in_gcs, 100000). Older tasks may have been evicted, so the start of this job could be missing.`)

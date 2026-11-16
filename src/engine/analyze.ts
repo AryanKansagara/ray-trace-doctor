@@ -5,7 +5,7 @@ import type { Settings } from './settings.ts'
 
 export type DiagnosisKind =
   | 'gpu-idle' | 'starved-stage' | 'idle-while-work' | 'straggler' | 'task-skew' | 'worker-skew'
-  | 'deserialize' | 'store-outputs' | 'too-small' | 'serial-stage' | 'barrier' | 'low-utilization' | 'critical-path'
+  | 'deserialize' | 'store-outputs' | 'failed-attempts' | 'too-small' | 'serial-stage' | 'barrier' | 'low-utilization' | 'critical-path'
 
 export interface Diagnosis {
   id: string
@@ -801,6 +801,62 @@ export function analyze(trace: Trace, s: Settings): Analysis {
     `# Reserve more object store memory at start-up\nray.init(object_store_memory=20 * 1024**3)\n# or: ray start --object-store-memory=<bytes>`,
     'https://docs.ray.io/en/latest/ray-core/objects/object-spilling.html',
   )
+
+  // --- Failed attempts that Ray retried -------------------------------------------------------------
+  // Ray's timeline has no attempt number or error: a retry shows up as a second span with the same task ID,
+  // and the failed attempt has no store_outputs. Every attempt but the last one for an ID was thrown away.
+  {
+    const byId = new Map<string, number[]>()
+    for (let i = 0; i < n; i++) {
+      const id = trace.taskIds[i]
+      if (!id || !isUser(i)) continue
+      const l = byId.get(id)
+      if (l) l.push(i)
+      else byId.set(id, [i])
+    }
+    const failed: number[] = []
+    let retriedTasks = 0
+    for (const rows of byId.values()) {
+      if (rows.length < 2) continue
+      retriedTasks++
+      rows.sort((a, b) => start[a] - start[b])
+      failed.push(...rows.slice(0, -1))
+    }
+    const lost = sum(failed.map((i) => dur[i]))
+    if (failed.length && lost >= Math.max(0.1, 0.01 * T)) {
+      const perType = new Map<number, { n: number; lost: number }>()
+      for (const i of failed) {
+        const e = perType.get(typeOf[i]) ?? { n: 0, lost: 0 }
+        e.n++
+        e.lost += dur[i]
+        perType.set(typeOf[i], e)
+      }
+      const ranked = [...perType].sort((a, b) => b[1].lost - a[1].lost)
+      const label = (ty: number) => types[ty].label
+      const work = sum(byWorker.flat().map((i) => dur[i]))
+      const evidence = [
+        `${failed.length} failed attempt${failed.length > 1 ? 's' : ''} across ${retriedTasks} task${retriedTasks > 1 ? 's' : ''}: ${fmtS(lost)}, ${pct(lost / Math.max(1e-9, work))} of all task time.`,
+        ...ranked.slice(0, 3).map(([ty, e]) => `${label(ty)}: ${e.n} failed attempt${e.n > 1 ? 's' : ''}, ${fmtS(e.lost)}, about ${fmtS(e.lost / e.n)} each before failing.`),
+      ]
+      const avgFail = lost / failed.length
+      push({
+        kind: 'failed-attempts',
+        title: `${fmtS(lost)} thrown away on failed attempts that Ray retried`,
+        summary: `${retriedTasks} task${retriedTasks > 1 ? 's' : ''} had to run again. Each failed attempt got ${fmtS(avgFail)} in on average before its work was discarded.`,
+        evidence,
+        lostWorkerSeconds: lost,
+        saved: estimate(lost, sum(failed.filter((i) => onPath.has(i)).map((i) => dur[i]))),
+        savedHow: 'Assumes the failures stop entirely. If they are transient, retrying only the failing call inside the task recovers most of it.',
+        suggestion: 'Find out why the attempts failed: `ray list tasks --filter "state=FAILED"` or the task\'s error in the dashboard. For flaky I/O, retry the one call inside the task with backoff so a timeout does not redo the whole task. For out-of-memory kills, give the task a `memory=` request so fewer run per node.',
+        code: `@ray.remote(max_retries=3, retry_exceptions=[TimeoutError])\ndef load(path):\n    for attempt in range(3):  # retry the read, not the task\n        try:\n            return read(path)\n        except TimeoutError:\n            time.sleep(2 ** attempt)\n    raise TimeoutError(path)`,
+        docUrl: 'https://docs.ray.io/en/latest/ray-core/fault_tolerance/tasks.html',
+        inferred: ['A repeated task ID is read as a retry and every attempt but the last as failed: Ray\'s timeline records no attempt number or error message.'],
+        spans: limit(failed),
+        gaps: [],
+        focus: span(failed.slice(0, 200)),
+      })
+    }
+  }
 
   // --- Tasks too small to pay for themselves -------------------------------------------------------
   {

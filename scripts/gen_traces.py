@@ -76,12 +76,51 @@ def small(batch):
     ray.get([score_row.remote(per_row * batch) for _ in range(rows // batch)])
 
 
+def retries():
+    import os, tempfile
+
+    ray.init(num_cpus=8, include_dashboard=False, logging_level="ERROR")
+    marks = tempfile.mkdtemp()
+
+    @ray.remote(max_retries=3, retry_exceptions=True)
+    def flaky_load(i):
+        # A third of the shards time out partway through, twice, then succeed.
+        time.sleep(0.4)
+        path = os.path.join(marks, str(i))
+        n = int(open(path).read()) if os.path.exists(path) else 0
+        open(path, "w").write(str(n + 1))
+        if i % 3 == 0 and n < 2:
+            raise IOError("simulated read timeout")
+        time.sleep(0.2)
+        return i
+
+    ray.get([flaky_load.remote(i) for i in range(24)])
+
+
+def nested():
+    ray.init(num_cpus=6, include_dashboard=False, logging_level="ERROR")
+
+    @ray.remote
+    def leaf(i):
+        time.sleep(0.15 + 0.05 * (i % 3))
+        return i
+
+    @ray.remote
+    def parent(j):
+        # Blocks in ray.get while the leaves run; Ray lends its CPU out meanwhile.
+        return sum(ray.get([leaf.remote(j * 10 + k) for k in range(6)]))
+
+    ray.get([parent.remote(j) for j in range(4)])
+
+
 JOBS = {
     "gpu_starved": lambda: gpu_pipeline(2),
     "gpu_fixed": lambda: gpu_pipeline(10),
     "skew": skew,
     "small": lambda: small(1),
     "small_fixed": lambda: small(100),
+    "retries": retries,
+    "nested": nested,
 }
 
 if __name__ == "__main__":

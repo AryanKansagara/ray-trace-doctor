@@ -57,6 +57,9 @@ function Hl({ line }: { line: string }) {
   })}</code>
 }
 
+// Engine text marks code with backticks; render those parts as <code>.
+const Ticks = ({ text }: { text: string }) => <>{text.split('`').map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part))}</>
+
 function DiagCard({ d, active, job, onClick }: { d: Diagnosis; active: boolean; job: number; onClick: () => void }) {
   const ref = useRef<HTMLElement>(null)
   useEffect(() => {
@@ -68,7 +71,7 @@ function DiagCard({ d, active, job, onClick }: { d: Diagnosis; active: boolean; 
       <button className="diag-head" onClick={onClick} aria-expanded={active}>
         <span className="sev-tag"><i aria-hidden />{d.severity}</span>
         <h3>{d.title}</h3>
-        <p>{d.summary}</p>
+        <p><Ticks text={d.summary} /></p>
         <div className="diag-nums">
           {d.lostWorkerSeconds > 0 && <span><b>{fmtS(d.lostWorkerSeconds)}</b> lost worker time</span>}
           {hasEstimate && <span><b>{fmtS(d.saved.low)}{d.saved.high > d.saved.low * 1.05 ? ` to ${fmtS(d.saved.high)}` : ''}</b> est. saved ({((d.saved.high / job) * 100).toFixed(0)}% at most)</span>}
@@ -76,9 +79,9 @@ function DiagCard({ d, active, job, onClick }: { d: Diagnosis; active: boolean; 
       </button>
       {active && (
         <div className="diag-body">
-          <ul className="evidence">{d.evidence.map((e) => <li key={e}>{e}</li>)}</ul>
+          <ul className="evidence">{d.evidence.map((e) => <li key={e}><Ticks text={e} /></li>)}</ul>
           <h4>What to try</h4>
-          <p>{d.suggestion}</p>
+          <p><Ticks text={d.suggestion} /></p>
           {d.code && <Code code={d.code} />}
           {hasEstimate && <p className="fine"><b>If fixed (an estimate):</b> {d.savedHow}</p>}
           {d.inferred.length > 0 && <p className="fine"><b>Inferred, not in the trace:</b> {d.inferred.join(' ')}</p>}
@@ -336,7 +339,7 @@ export default function Tool() {
         <main className="empty">
           <div className="err" role="alert">
             <b>No Ray tasks to analyze in {trace?.name}.</b>
-            <ul>{(errors.length ? errors : trace?.issues ?? []).map((i) => <li key={i.code}>{i.message}</li>)}</ul>
+            <ul>{(errors.length ? errors : trace?.issues ?? []).map((i) => <li key={i.code}><Ticks text={i.message} /></li>)}</ul>
           </div>
           <Dropzone onFile={(f) => pickFile(f)} />
           <h2 className="h3">Or start from a sample</h2>
@@ -450,7 +453,7 @@ export default function Tool() {
                   </dl>
                   <h4>Anything unexpected in this file</h4>
                   {trace.issues.length === 0 ? <p className="fine">Nothing. Every event parsed and matched a task.</p> : (
-                    <ul className="issues">{trace.issues.map((i) => <li key={i.code} className={`iss-${i.severity}`}><b>{i.severity}</b> {i.message}{i.count > 1 ? ` (${i.count.toLocaleString('en-US')})` : ''}</li>)}</ul>
+                    <ul className="issues">{trace.issues.map((i) => <li key={i.code} className={`iss-${i.severity}`}><b>{i.severity}</b> <Ticks text={i.message} />{i.count > 1 ? ` (${i.count.toLocaleString('en-US')})` : ''}</li>)}</ul>
                   )}
                 </div>
               )}

@@ -11,7 +11,7 @@ Ray's forum keeps hearing about [idle workers holding GPU memory](https://discus
 ## Features
 
 - **Streaming engine in a Web Worker.** Parses `.json` and `.json.gz` (native `DecompressionStream`) one event at a time into typed arrays. Reconstructs nodes, workers, actors and tasks, and reports anything unexpected.
-- **Diagnoses with evidence.** GPU workers idle, stages starving each other, idle while work exists, stragglers (modified z-score), skew, deserialization, store_outputs, too-small tasks, serialized stages, barriers, utilization, a critical-path-style estimate. Each has lost worker-seconds, a labelled "if fixed" estimate and a specific change to make.
+- **Diagnoses with evidence.** GPU workers idle, stages starving each other, idle while work exists, stragglers (modified z-score), skew, deserialization, store_outputs, too-small tasks, serialized stages, barriers, failed attempts that Ray retried, utilization, a critical-path-style estimate. Nested tasks that block in `ray.get` are flagged, because their wait looks like busy time. Each has lost worker-seconds, a labelled "if fixed" estimate and a specific change to make.
 - **Explicit about inference.** A trace records what ran and when. It has no resources, dependencies or queue contents, so each card lists what was inferred. GPU attribution uses your mapping (or a name guess you can turn off).
 - **Timeline.** Instanced WebGL2 (Canvas2D fallback) with level-of-detail aggregation, WASD navigation like Perfetto, and cards that jump to and light up the exact spans.
 - **Charts.** Worker x time heatmap, utilization over time, flame summary by task name, duration distributions.
@@ -21,7 +21,7 @@ Ray's forum keeps hearing about [idle workers holding GPU memory](https://discus
 
 ## Traces
 
-`scripts/gen_traces.py` produced the samples in `public/samples` and they are real Ray 2.60 `ray.timeline()` output. The workloads are synthetic (sleeps and small loops on one machine) and the GPUs are logical (`ray.init(num_gpus=N)`). The stress test is generated in the browser, is fully synthetic, and says so. `src/engine/fixtures/format-derived-dashboard.json` comes from running Ray's own `chrome_tracing_dump` on hand-written task records.
+`scripts/gen_traces.py` produced the samples in `public/samples` and they are real Ray 2.60 `ray.timeline()` output. The workloads are synthetic (sleeps and small loops on one machine) and the GPUs are logical (`ray.init(num_gpus=N)`). The stress test is generated in the browser, is fully synthetic, and says so. `src/engine/fixtures/ray-2.60-retries.json` and `ray-2.60-nested.json` are real Ray 2.60 output from the `retries` and `nested` jobs in the same script. Ray 2.60 writes no attempt number, so a retry shows up as a repeated task ID whose earlier spans have no `store_outputs`. `src/engine/fixtures/format-derived-dashboard.json` comes from running Ray's own `chrome_tracing_dump` on hand-written task records.
 
 ## Run locally
 
