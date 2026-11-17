@@ -106,6 +106,6 @@ footer{margin-top:48px;font-size:12px;color:var(--mut)}
 <h2>Diagnoses</h2>${cards}
 <h2>Task types</h2><div style="overflow:auto"><table><thead><tr><th>Type</th><th>Tasks</th><th>Total</th><th>p50</th><th>p95</th><th>Max</th><th>Peak</th></tr></thead><tbody>${types}</tbody></table></div>
 ${issues}
-<footer>This report contains task names and node addresses from the trace, and no raw spans. Same settings: <a href="${esc(appUrl)}${hash ? `#s=${hash}` : ''}">open in Ray Trace Doctor</a>. Built by Aryan Kansagara. Independent project, not affiliated with Anyscale.</footer>
+<footer>This report contains task names and node addresses from the trace, and no raw spans. Same settings: <a href="${esc(appUrl)}${hash ? `#s=${hash}` : ''}">open in Ray Trace Doctor</a>. Built by Aryan Kansagara.</footer>
 </main></body></html>`
 }

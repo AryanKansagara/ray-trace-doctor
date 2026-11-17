@@ -77,7 +77,7 @@ export function Footer() {
   return (
     <footer className="footer">
       <div className="rails footer-inner">
-        <span>Built by Aryan Kansagara. Independent project, not affiliated with Anyscale.</span>
+        <span>Built by Aryan Kansagara.</span>
         <span className="mono-sm">Traces are parsed in your browser and never uploaded.</span>
       </div>
     </footer>
