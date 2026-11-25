@@ -12,6 +12,8 @@ export type Request =
   | { kind: 'analyze'; slot: 'a' | 'b'; id: number; settings: Settings }
 
 const held: Partial<Record<'a' | 'b', { raw: Raw; trace: Trace; name: string; job: string }>> = {}
+// The newest load per slot while it runs, with the settings to finish it with.
+const pending: Partial<Record<'a' | 'b', { id: number; settings: Settings }>> = {}
 const post = (m: unknown) => (self as unknown as Worker).postMessage(m)
 
 function synthStream(n: number) {
@@ -29,8 +31,9 @@ function synthStream(n: number) {
 self.onmessage = async (ev: MessageEvent<Request>) => {
   const m = ev.data
   try {
-    const settings = sanitize(m.settings)
+    let settings = sanitize(m.settings)
     if (m.kind === 'load') {
+      const mine = (pending[m.slot] = { id: m.id, settings })
       const started = performance.now()
       let stream: ReadableStream<Uint8Array>
       let name: string
@@ -49,13 +52,21 @@ self.onmessage = async (ev: MessageEvent<Request>) => {
         name = m.source.name
       }
       const raw = await parseStream(stream, (bytes, events) => post({ kind: 'progress', slot: m.slot, id: m.id, bytes, events, size }))
+      if (pending[m.slot] !== mine) return // a newer load took the slot
+      delete pending[m.slot]
+      settings = mine.settings
       post({ kind: 'progress', slot: m.slot, id: m.id, bytes: raw.bytes, events: raw.events, size, phase: 'analyzing' })
       const job = settings.job
       const trace = buildTrace(raw, name, job || undefined)
       held[m.slot] = { raw, trace, name, job }
       const analysis = trace.n ? analyze(trace, settings) : null
-      post({ kind: 'done', slot: m.slot, id: m.id, trace, analysis, ms: performance.now() - started })
+      post({ kind: 'done', slot: m.slot, id: m.id, loaded: true, trace, analysis, ms: performance.now() - started })
     } else {
+      const p = pending[m.slot]
+      if (p?.id === m.id) {
+        p.settings = settings
+        return
+      }
       const h = held[m.slot]
       if (!h) return
       let rebuilt = false
@@ -68,6 +79,7 @@ self.onmessage = async (ev: MessageEvent<Request>) => {
       post({ kind: 'done', slot: m.slot, id: m.id, trace: rebuilt ? h.trace : undefined, analysis, ms: 0 })
     }
   } catch (err) {
+    if (pending[m.slot]?.id === m.id) delete pending[m.slot]
     post({ kind: 'error', slot: m.slot, id: m.id, message: (err as Error).message })
   }
 }

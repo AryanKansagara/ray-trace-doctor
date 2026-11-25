@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Footer, Nav } from './App.tsx'
 import { fmtS, type Diagnosis } from './engine/analyze.ts'
+import { incomplete, type Trace } from './engine/build.ts'
 import { compare } from './engine/compare.ts'
 import { reportHtml, reportJson } from './engine/report.ts'
 import { decodeSettings, DEFAULTS, encodeSettings, sanitize, type Settings } from './engine/settings.ts'
@@ -60,6 +61,17 @@ function Hl({ line }: { line: string }) {
 // Engine text marks code with backticks; render those parts as <code>.
 const Ticks = ({ text }: { text: string }) => <>{text.split('`').map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part))}</>
 
+function Incomplete({ trace, name }: { trace: Trace; name?: string }) {
+  const missing = incomplete(trace.issues)
+  if (!missing) return null
+  return (
+    <div className="err" role="alert">
+      <b>{name && `${name}: `}{missing.title}</b>
+      <ul>{missing.issues.map((i) => <li key={i.code}><Ticks text={i.message} />{i.count > 1 ? ` (${i.count.toLocaleString('en-US')})` : ''}</li>)}</ul>
+    </div>
+  )
+}
+
 function DiagCard({ d, active, job, onClick }: { d: Diagnosis; active: boolean; job: number; onClick: () => void }) {
   const ref = useRef<HTMLElement>(null)
   useEffect(() => {
@@ -114,10 +126,11 @@ function SettingsPanel({ s, set, jobs }: { s: Settings; set: (p: Partial<Setting
         <Field label="Straggler cutoff" hint="Modified z-score. 3.5 is the textbook value."><input type="number" min={1} step={0.5} value={s.stragglerK} onChange={(e) => set({ stragglerK: Number(e.target.value) || 3.5 })} /></Field>
         <Field label="Shortest gap counted (ms)"><input type="number" min={0} value={s.minGapMs} onChange={(e) => set({ minGapMs: Math.max(0, Number(e.target.value) || 0) })} /></Field>
         <Field label="Target task size (ms)" hint="Batch sizes in the too-small card aim for this."><input type="number" min={1} value={s.targetTaskMs} onChange={(e) => set({ targetTaskMs: Number(e.target.value) || 100 })} /></Field>
-        {jobs.length > 1 && (
+        {(jobs.length > 1 || s.job) && (
           <Field label="Job" hint="ray timeline dumps the whole cluster.">
             <select value={s.job} onChange={(e) => set({ job: e.target.value })}>
               <option value="">All jobs</option>
+              {s.job && !jobs.some((j) => j.id === s.job) && <option value={s.job}>{s.job} (not in this trace)</option>}
               {jobs.map((j) => <option key={j.id} value={j.id}>{j.id} ({j.tasks} tasks)</option>)}
             </select>
           </Field>
@@ -202,8 +215,8 @@ export default function Tool() {
   useEffect(() => {
     localStorage.setItem('rtd.settings', JSON.stringify(settings))
     const h = setTimeout(() => {
-      if (slots.a.data) reanalyze('a', settings)
-      if (slots.b.data) reanalyze('b', settings)
+      if (slots.a.data || slots.a.phase === 'loading') reanalyze('a', settings)
+      if (slots.b.data || slots.b.phase === 'loading') reanalyze('b', settings)
     }, 250)
     return () => clearTimeout(h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -297,6 +310,7 @@ export default function Tool() {
   const exportBase = (trace?.name ?? 'trace').replace(/\.json(\.gz)?$/, '')
   const showEmpty = !data && a.phase !== 'loading'
   const errors = trace?.issues.filter((i) => i.severity === 'error') ?? []
+  const jobNote = trace?.issues.find((i) => i.code === 'job-missing')
   const lostTop = analysis?.diagnoses[0]
   const sel = selected !== null && trace && selected < trace.n ? selected : null
 
@@ -318,7 +332,7 @@ export default function Tool() {
         </div>
       )}
       {a.phase === 'error' && (
-        <div className="err" role="alert"><b>That file could not be read.</b> {a.error}</div>
+        <div className="err" role="alert"><b>{a.name} could not be read.</b> {a.error}</div>
       )}
 
       {showEmpty && (
@@ -349,10 +363,11 @@ export default function Tool() {
 
       {trace && analysis && (
         <main className="work">
+          <Incomplete trace={trace} />
           <section className="statbar" aria-label="Job summary">
             <div className="stat name">
               <span className="eyebrow"><i />{sampleInfo?.provenance ?? 'Your trace, local only'}</span>
-              <h1>{a.name || trace.name}</h1>
+              <h1>{data?.name || trace.name}</h1>
             </div>
             <div className="stat"><b>{fmtS(analysis.summary.jobSeconds)}</b><span>Job time</span></div>
             <div className="stat"><b>{(analysis.summary.utilization * 100).toFixed(0)}%</b><span>of {analysis.summary.slots} slots{analysis.summary.slotsInferred ? ' (inferred)' : ''} busy</span></div>
@@ -364,6 +379,8 @@ export default function Tool() {
             </div>
           </section>
 
+          {jobNote && <p className="err" role="note">{jobNote.message}</p>}
+
           <div className="split">
             <aside className="rail" aria-label="Diagnoses">
               <div className="rail-head">
@@ -371,7 +388,7 @@ export default function Tool() {
                 <span className="mono-sm">J / K. They overlap: do not add them up.</span>
               </div>
               <div className="rail-list">
-                {analysis.diagnoses.length === 0 && <p className="fine pad">Nothing stands out. This job kept its workers busy.</p>}
+                {analysis.diagnoses.length === 0 && <p className="fine pad">{incomplete(trace.issues) ? 'Nothing stands out in the part of the trace that was read.' : 'Nothing stands out. This job kept its workers busy.'}</p>}
                 {analysis.diagnoses.map((d) => (
                   <DiagCard key={d.id} d={d} job={analysis.summary.jobSeconds} active={d.id === active} onClick={() => activate(d.id === active ? null : d)} />
                 ))}
@@ -431,10 +448,13 @@ export default function Tool() {
                   )}
                   {slots.b.phase === 'loading' && <p className="mono-sm" role="status">Parsing {slots.b.name}</p>}
                   {slots.b.phase === 'error' && <p className="err" role="alert">{slots.b.error}</p>}
-                  {slots.b.data && !comparison && <p className="err" role="alert">{slots.b.name} has no Ray tasks to compare.</p>}
+                  {slots.b.data && !comparison && <p className="err" role="alert">{slots.b.data.name} has no Ray tasks to compare.</p>}
                   {comparison && (
                     <>
-                      <CompareView c={comparison} nameA={a.name} nameB={slots.b.name} />
+                      {slots.b.data!.trace.issues.filter((i) => i.code === 'job-missing').map((i) => <p key={i.code} className="err" role="note">{slots.b.data!.name}: {i.message}</p>)}
+                      <Incomplete trace={trace} name={data?.name} />
+                      <Incomplete trace={slots.b.data!.trace} name={slots.b.data!.name} />
+                      <CompareView c={comparison} nameA={data?.name ?? trace.name} nameB={slots.b.data?.name ?? ''} />
                       <button className="btn btn-ghost btn-sm" onClick={() => clear('b')}>Clear comparison</button>
                     </>
                   )}

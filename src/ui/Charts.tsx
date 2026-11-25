@@ -51,7 +51,7 @@ export function UtilChart({ analysis, onSeek }: { analysis: Analysis; onSeek?: (
   return (
     <figure className="chart">
       <figcaption>
-        <h4>Running tasks over time</h4>
+        <h4>Busy workers over time</h4>
         <div className="chart-keys">
           <span><i style={{ background: 'var(--blue)' }} />All workers</span>
           {util.gpu && <span><i style={{ background: 'var(--c2)' }} />GPU workers (inferred)</span>}
@@ -62,7 +62,7 @@ export function UtilChart({ analysis, onSeek }: { analysis: Analysis; onSeek?: (
         const r = e.currentTarget.getBoundingClientRect()
         setHover(Math.max(0, Math.min(util.buckets - 1, Math.round(((e.clientX - r.left) / r.width) * (util.buckets - 1)))))
       }} onClick={() => hover !== null && onSeek?.(summary.start + hover * util.dt)}>
-        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Running tasks over a ${fmtS(summary.jobSeconds)} job, ${(summary.utilization * 100).toFixed(0)} percent of slots busy on average`}>
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Busy workers over a ${fmtS(summary.jobSeconds)} job, ${(summary.utilization * 100).toFixed(0)} percent of slots busy on average`}>
           {ticks.map((t) => <line key={t} x1={0} x2={W} y1={y(summary.slots * t)} y2={y(summary.slots * t)} className={t === 1 ? 'grid strong' : 'grid'} />)}
           <path d={`${line(util.running)}L${W} ${H}L0 ${H}Z`} fill="var(--blue)" fillOpacity={0.12} />
           <path d={line(util.running)} fill="none" stroke="var(--blue)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
@@ -72,7 +72,7 @@ export function UtilChart({ analysis, onSeek }: { analysis: Analysis; onSeek?: (
         {hover !== null && (
           <div className="ptip" style={{ left: `${Math.min(80, (hover / util.buckets) * 100)}%` }}>
             <b>{fmtS(hover * util.dt)}</b>
-            <span>{util.running[hover].toFixed(1)} running of {summary.slots}</span>
+            <span>{util.running[hover].toFixed(1)} busy of {summary.slots}</span>
             {util.gpu && <span>{util.gpu[hover].toFixed(1)} on GPU workers</span>}
             {util.backlog && <span>{util.backlog[hover].toFixed(0)} submitted, not started</span>}
           </div>

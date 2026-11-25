@@ -30,4 +30,6 @@ npm install
 npm run dev
 npm test
 npm run build
+npx playwright install chromium
+npm run test:e2e  # after a build; set E2E_PORT to change the port (4196)
 ```

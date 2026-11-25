@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { TraceParser, parseStream } from './parse.ts'
-import { buildTrace, describeType, parseTaskId } from './build.ts'
+import { buildTrace, describeType, incomplete, parseTaskId } from './build.ts'
 import { analyze, quantile, type Analysis } from './analyze.ts'
 import { aggregateRow, buildRows, firstVisible, levelFor, MAX_AGG_BUCKETS, taskAt } from './lod.ts'
 import { compare } from './compare.ts'
@@ -134,6 +134,28 @@ test('truncated object at the end still analyzes everything before it', async ()
   assert.ok(t.issues.some((i) => i.code === 'truncated'))
 })
 
+test('missing data is called incomplete; a complete trace is not', async () => {
+  const full = JSON.stringify([...task('a', 'worker:1', 0, 1000, 1), ...task('a', 'worker:1', 2000, 1000, 2)])
+  const of = async (bytes: Uint8Array) => incomplete(buildTrace(await parseStream(streamOf(bytes))).issues)
+  const enc = (s: string) => new TextEncoder().encode(s)
+  assert.equal(await of(enc(full)), null)
+  assert.equal(await of(enc(`{"traceEvents":${full}}`)), null)
+  assert.match((await of(enc(full.slice(0, -1))))!.title, /is incomplete/)
+  assert.match((await of(gzipSync(enc(full)).subarray(0, -12)))!.title, /is incomplete/)
+  assert.match((await of(enc(full.replace('"ts":2000', '"ts":null'))))!.title, /is incomplete/)
+  assert.match((await of(enc(full.replace(']', ',7]'))))!.title, /may be incomplete/)
+  for (const f of ['gpu_starved', 'gpu_fixed', 'retries', 'skew', 'small', 'small_fixed']) assert.equal(await of(sample(f)), null, f)
+  for (const f of ['ray-2.60-actors-and-failure.json', 'ray-2.60-async-actor.json', 'ray-2.60-nested.json', 'ray-2.60-retries.json', 'format-derived-dashboard.json']) assert.equal(await of(fixture(f)), null, f)
+})
+
+test('reports say a truncated trace is incomplete before any number', async () => {
+  const cut = asBytes(task('a', 'worker:1', 0, 1000, 1)).subarray(0, -1)
+  const { trace, a } = await load(cut)
+  const html = reportHtml(trace, a, DEFAULTS, 'https://x.test/app')
+  assert.ok(html.indexOf('This trace is incomplete') > 0 && html.indexOf('This trace is incomplete') < html.indexOf('Job time'))
+  assert.equal(reportJson(trace, a, DEFAULTS).complete, false)
+})
+
 test('task IDs: actor and job are recovered from the bytes, Ray Data names are simplified', () => {
   assert.deepEqual(parseTaskId('82891771158d68c1ffffffffffffffffffffffff01000000'), { actorId: null, jobId: '01000000' })
   assert.deepEqual(parseTaskId('aa3d5d11e415fe8847c93b29b956ec1208def9a801000000'), { actorId: '47c93b29b956ec1208def9a801000000', jobId: '01000000' })
@@ -152,6 +174,20 @@ test('multi-job dumps warn, and a job filter restricts the analysis', () => {
   const raw = p.finish()
   assert.ok(buildTrace(raw).issues.some((i) => i.code === 'multi-job'))
   assert.equal(buildTrace(raw, 'x', '02000000').n, 1)
+  assert.ok(!buildTrace(raw, 'x', '02000000').issues.some((i) => i.code === 'job-missing'))
+})
+
+test('a job filter for a job this trace does not have is reported and not applied', () => {
+  const p = new TraceParser()
+  p.push(asBytes([...task('a', 'worker:1', 0, 1000, 1), ...task('a', 'worker:1', 2000, 1000, 2)]))
+  const raw = p.finish()
+  const t = buildTrace(raw, 'x', '02000000')
+  assert.equal(t.n, 2)
+  assert.equal(t.duration, 0.003)
+  assert.match(t.issues.find((i) => i.code === 'job-missing')!.message, /job 02000000/)
+  const empty = new TraceParser()
+  empty.push(asBytes([]))
+  assert.deepEqual(buildTrace(empty.finish(), 'x', '02000000').issues.map((i) => i.code), ['no-tasks'])
 })
 
 test('real GPU-starved Ray Data trace: blames CPU preprocessing for idle GPU actors', async () => {
@@ -385,4 +421,67 @@ test('nested detection: a submit inside the span flags it, one after the span do
   assert.equal(inside.trace.issues.find((i) => i.code === 'nested-tasks')?.count, 1)
   const after = await load(asBytes([...task('parent', 'worker:p', 0, 1_000_000, 1), sub('worker:p', 1_500_000)]))
   assert.ok(!after.trace.issues.some((i) => i.code === 'nested-tasks'))
+})
+
+test('overlapping calls on one actor share its slot, on paper', async () => {
+  const call = (id: number, ts: number, dur: number) => ({ ...span('task::Api.call', 'worker:a', ts, dur), args: { task_id: `${id.toString(16).padStart(16, '0')}${'a'.repeat(24)}01000000` } })
+  // 8 calls, all 0-10 s: one slot, 10 of 10 s busy.
+  const full = (await load(asBytes(Array.from({ length: 8 }, (_, i) => call(i + 1, 0, 10e6))))).a
+  assert.equal(full.summary.slots, 1)
+  assert.equal(full.summary.utilization, 1)
+  assert.ok(Math.abs(Math.max(...full.util.running) - 1) < 1e-9)
+  // Calls 0-2 and 1-4 s, then 8-10 s, plus a stateless task 0-5 s: 2 slots, busy (4 + 2) + 5 = 11 of 20.
+  const mixed = (await load(asBytes([call(1, 0, 2e6), call(2, 1e6, 3e6), call(3, 8e6, 2e6), span('task::s', 'worker:b', 0, 5e6, 9)]))).a
+  assert.equal(mixed.summary.slots, 2)
+  assert.ok(Math.abs(mixed.summary.utilization - 0.55) < 1e-9)
+  assert.ok(Math.abs(mixed.util.running.reduce((x, y) => x + y, 0) * mixed.util.dt - 11) < 1e-6)
+  // At 3 s only one call runs; the actor is still fully busy.
+  const row = mixed.heat.rows.findIndex((w) => mixed.workers.find((x) => x.worker === w)!.busy > 5.5)
+  assert.ok(Math.abs(mixed.heat.data[row * mixed.heat.buckets + 144] - 1) < 1e-5)
+})
+
+test('GPU workers are held from their own first span, on paper', async () => {
+  const gpu = (w: string, id: number, ts: number, dur: number) => ({ ...span('task::Model.infer', w, ts * 1e6, dur * 1e6), args: { task_id: `${id.toString(16).padStart(16, '0')}${w[7].repeat(24)}01000000` } })
+  const card = async (events: unknown[], s = DEFAULTS) => (await load(asBytes([span('task::prep', 'worker:c', 0, 100e6, 1), ...events]), s)).a.diagnoses.find((d) => d.kind === 'gpu-idle')!
+  // Held 50-100 = 50 s, busy 10 = 20%, idle 40 = 80%.
+  const one = await card([gpu('worker:a', 2, 50, 10)])
+  assert.match(one.title, /idle 80%/)
+  assert.equal(one.evidence[0], '1 GPU worker held for 50.0 s, busy 20% of that time.')
+  // Plus one held 0-100 and busy for 60: held 150, busy 70 (47%), idle 80 (53%).
+  const two = await card([gpu('worker:a', 2, 50, 10), gpu('worker:b', 3, 0, 60)])
+  assert.match(two.title, /idle 53%/)
+  assert.equal(two.evidence[0], '2 GPU workers held for 2.5 min in total, busy 47% of that time.')
+  // Two GPUs each: twice the GPU-seconds, the same shares.
+  const twice = await card([gpu('worker:a', 2, 50, 10), gpu('worker:b', 3, 0, 60)], { ...DEFAULTS, gpusPerWorker: 2 })
+  assert.equal(twice.title, two.title)
+  assert.equal(twice.evidence[0], two.evidence[0])
+  assert.ok(Math.abs(two.lostWorkerSeconds - 80) < 1e-6 && Math.abs(twice.lostWorkerSeconds - 160) < 1e-6)
+  // Held 90-100, idle 2 of those 10 s: 2% of the job, but 20% of the hold.
+  assert.match((await card([gpu('worker:a', 2, 90, 8)])).title, /idle 20%/)
+})
+
+test('compare matches findings by kind and task type, not by title text', async () => {
+  const small = (names: string[]) => {
+    const ev: unknown[] = []
+    let k = 0
+    for (const n of names) for (let i = 0; i < 400; i++, k++) ev.push(...task(n, 'worker:1', k * 5000, 4000, k + 1, 2000, 1000))
+    return ev
+  }
+  const an = async (ev: unknown[]) => (await load(asBytes(ev))).a
+  const v1 = await an(small(['score_v1']))
+  const v2 = await an(small(['score_v2']))
+  const both = await an(small(['score_v1', 'score_v2']))
+  const has = (list: string[], t: string) => list.some((x) => x.startsWith(`${t} tasks are too small`))
+  const fixed = compare(both, v2)
+  assert.ok(has(fixed.resolved, 'score_v1') && has(fixed.remaining, 'score_v2') && !has(fixed.resolved, 'score_v2'))
+  const moved = compare(v1, v2)
+  assert.ok(has(moved.resolved, 'score_v1') && has(moved.introduced, 'score_v2') && !has(moved.remaining, 'score_v2'))
+  // Two stragglers, then one: singular, same finding.
+  const slow = (n: number) => Array.from({ length: 20 }, (_, i) => span('task::s', `worker:${i}`, 0, i < n ? 10e6 : 1e6, i + 1))
+  const s = compare(await an(slow(2)), await an(slow(1)))
+  assert.ok(s.remaining.includes('1 straggler task') && !s.resolved.some((t) => t.includes('straggler')) && !s.introduced.some((t) => t.includes('straggler')))
+  // 1.20 s thrown away, then 900 ms: another unit, same finding.
+  const failed = (d: number) => [...task('load', 'worker:a', 0, d, 1), ...task('load', 'worker:a', d, 1e6, 1)]
+  const w = compare(await an(failed(1.2e6)), await an(failed(0.9e6)))
+  assert.ok(w.remaining.some((t) => t.startsWith('900.0 ms thrown away')) && !w.resolved.length)
 })
