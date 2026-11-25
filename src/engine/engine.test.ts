@@ -439,3 +439,23 @@ test('overlapping calls on one actor share its slot, on paper', async () => {
   const row = mixed.heat.rows.findIndex((w) => mixed.workers.find((x) => x.worker === w)!.busy > 5.5)
   assert.ok(Math.abs(mixed.heat.data[row * mixed.heat.buckets + 144] - 1) < 1e-5)
 })
+
+test('GPU workers are held from their own first span, on paper', async () => {
+  const gpu = (w: string, id: number, ts: number, dur: number) => ({ ...span('task::Model.infer', w, ts * 1e6, dur * 1e6), args: { task_id: `${id.toString(16).padStart(16, '0')}${w[7].repeat(24)}01000000` } })
+  const card = async (events: unknown[], s = DEFAULTS) => (await load(asBytes([span('task::prep', 'worker:c', 0, 100e6, 1), ...events]), s)).a.diagnoses.find((d) => d.kind === 'gpu-idle')!
+  // Held 50-100 = 50 s, busy 10 = 20%, idle 40 = 80%.
+  const one = await card([gpu('worker:a', 2, 50, 10)])
+  assert.match(one.title, /idle 80%/)
+  assert.equal(one.evidence[0], '1 GPU worker held for 50.0 s, busy 20% of that time.')
+  // Plus one held 0-100 and busy for 60: held 150, busy 70 (47%), idle 80 (53%).
+  const two = await card([gpu('worker:a', 2, 50, 10), gpu('worker:b', 3, 0, 60)])
+  assert.match(two.title, /idle 53%/)
+  assert.equal(two.evidence[0], '2 GPU workers held for 2.5 min in total, busy 47% of that time.')
+  // Two GPUs each: twice the GPU-seconds, the same shares.
+  const twice = await card([gpu('worker:a', 2, 50, 10), gpu('worker:b', 3, 0, 60)], { ...DEFAULTS, gpusPerWorker: 2 })
+  assert.equal(twice.title, two.title)
+  assert.equal(twice.evidence[0], two.evidence[0])
+  assert.ok(Math.abs(two.lostWorkerSeconds - 80) < 1e-6 && Math.abs(twice.lostWorkerSeconds - 160) < 1e-6)
+  // Held 90-100, idle 2 of those 10 s: 2% of the job, but 20% of the hold.
+  assert.match((await card([gpu('worker:a', 2, 90, 8)])).title, /idle 20%/)
+})

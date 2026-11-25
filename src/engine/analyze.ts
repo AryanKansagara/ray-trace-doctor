@@ -390,13 +390,14 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       if (!byWorker[g.worker].some(isWork)) zeroWork++
     }
     lost *= s.gpusPerWorker
-    const capacity = gpuWorkers.length * s.gpusPerWorker * Math.max(1e-9, T)
-    if (lost >= minGap && lost / capacity >= 0.1) {
+    const held = sum(gpuWorkers.map((g) => jobEnd - g.first)) // worker-seconds, from each worker's first span
+    const idleShare = lost / Math.max(1e-9, held * s.gpusPerWorker)
+    if (lost >= minGap && idleShare >= 0.1) {
       const gpuTypes = new Set(gpuWorkers.flatMap((g) => typesOn[g.worker]))
       const gpuStage = workStats.filter((x) => gpuTypes.has(x.type)).sort((a, b) => b.total - a.total)[0]
       upstream = stages.filter((x) => !gpuTypes.has(x.type) && x.first <= (gpuStage?.first ?? Infinity)).sort((a, b) => b.total - a.total)[0] ?? null
       const evidence = [
-        `${gpuWorkers.length} GPU worker${gpuWorkers.length > 1 ? 's' : ''} held for ${fmtS(T)}, busy ${pct(1 - lost / capacity)} of that time.`,
+        `${gpuWorkers.length} GPU worker${gpuWorkers.length > 1 ? 's' : ''} held for ${fmtS(held)}${gpuWorkers.length > 1 ? ' in total' : ''}, busy ${pct(1 - idleShare)} of that time.`,
         `Longest single idle gap: ${fmtS(longest)}.`,
       ]
       if (zeroWork) evidence.push(`${zeroWork} of ${gpuWorkers.length} GPU actor${gpuWorkers.length > 1 ? 's' : ''} never received a batch: only their constructor ran.`)
@@ -406,7 +407,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       const fnName = /MapBatches\((.*)\)/.exec(stageName)?.[1]
       push({
         kind: 'gpu-idle',
-        title: `GPU workers idle ${pct(lost / capacity)} of the job`,
+        title: `GPU workers idle ${pct(idleShare)} of the time they were held`,
         summary: `${fmtS(lost)} of GPU time was reserved but did nothing.`,
         evidence,
         lostWorkerSeconds: lost,
