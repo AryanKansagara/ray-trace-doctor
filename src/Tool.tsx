@@ -202,8 +202,8 @@ export default function Tool() {
   useEffect(() => {
     localStorage.setItem('rtd.settings', JSON.stringify(settings))
     const h = setTimeout(() => {
-      if (slots.a.data) reanalyze('a', settings)
-      if (slots.b.data) reanalyze('b', settings)
+      if (slots.a.data || slots.a.phase === 'loading') reanalyze('a', settings)
+      if (slots.b.data || slots.b.phase === 'loading') reanalyze('b', settings)
     }, 250)
     return () => clearTimeout(h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -318,7 +318,7 @@ export default function Tool() {
         </div>
       )}
       {a.phase === 'error' && (
-        <div className="err" role="alert"><b>That file could not be read.</b> {a.error}</div>
+        <div className="err" role="alert"><b>{a.name} could not be read.</b> {a.error}</div>
       )}
 
       {showEmpty && (
@@ -352,7 +352,7 @@ export default function Tool() {
           <section className="statbar" aria-label="Job summary">
             <div className="stat name">
               <span className="eyebrow"><i />{sampleInfo?.provenance ?? 'Your trace, local only'}</span>
-              <h1>{a.name || trace.name}</h1>
+              <h1>{data?.name || trace.name}</h1>
             </div>
             <div className="stat"><b>{fmtS(analysis.summary.jobSeconds)}</b><span>Job time</span></div>
             <div className="stat"><b>{(analysis.summary.utilization * 100).toFixed(0)}%</b><span>of {analysis.summary.slots} slots{analysis.summary.slotsInferred ? ' (inferred)' : ''} busy</span></div>
@@ -431,10 +431,10 @@ export default function Tool() {
                   )}
                   {slots.b.phase === 'loading' && <p className="mono-sm" role="status">Parsing {slots.b.name}</p>}
                   {slots.b.phase === 'error' && <p className="err" role="alert">{slots.b.error}</p>}
-                  {slots.b.data && !comparison && <p className="err" role="alert">{slots.b.name} has no Ray tasks to compare.</p>}
+                  {slots.b.data && !comparison && <p className="err" role="alert">{slots.b.data.name} has no Ray tasks to compare.</p>}
                   {comparison && (
                     <>
-                      <CompareView c={comparison} nameA={a.name} nameB={slots.b.name} />
+                      <CompareView c={comparison} nameA={data?.name ?? trace.name} nameB={slots.b.data?.name ?? ''} />
                       <button className="btn btn-ghost btn-sm" onClick={() => clear('b')}>Clear comparison</button>
                     </>
                   )}
