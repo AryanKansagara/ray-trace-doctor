@@ -85,7 +85,7 @@ test('mapping GPU workers by hand changes the attribution', async ({ page }) => 
   // save ran on w1 only, which was idle 6-8 s: 2 of 10 s.
   await page.getByLabel('GPU task types').fill('save')
   await expect(stat(page, 'GPU workers')).toHaveText('1')
-  const c = card(page, 'GPU workers idle 20% of the job')
+  const c = card(page, 'GPU workers idle 20% of the time they were held')
   await expect(c).toContainText('2.00 s lost worker time')
   await page.getByLabel('GPUs per worker').fill('2')
   await expect(c).toContainText('4.00 s lost worker time')
