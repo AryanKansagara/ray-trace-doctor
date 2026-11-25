@@ -319,6 +319,31 @@ test('critical-path chain is ordered and fits within wall time', async () => {
   assert.ok(a.summary.criticalSeconds <= a.summary.jobSeconds + 1e-6)
 })
 
+test('critical-path chain passes zero-length tasks, on paper', async () => {
+  const s = 1e6
+  const a = span('task::a', 'worker:1', 0, 5 * s, 1)
+  const b = span('task::b', 'worker:1', 5 * s, 5 * s, 2)
+  const z = (ts: number, id: number) => span('task::z', 'worker:1', ts * s, 0, id)
+  const critical = async (events: unknown[]) => (await load(asBytes(events))).a
+  for (const extra of [[], [z(5, 3)], [z(10, 3)], [z(0, 3)], [z(0, 3), z(5, 4), z(5, 5), z(10, 6)]]) {
+    const r = await critical([a, ...extra, b])
+    assert.equal(r.summary.criticalSeconds, 10)
+    assert.equal(r.critical.gapSeconds, 0)
+    assert.equal(new Set(r.critical.tasks).size, r.critical.tasks.length, 'no task twice')
+  }
+  // The 2 s gap counts once, whether or not a zero-length task sits in it.
+  for (const extra of [[], [z(6, 3)]]) {
+    const r = await critical([a, ...extra, span('task::b', 'worker:1', 7 * s, 5 * s, 2)])
+    assert.equal(r.summary.criticalSeconds, 12)
+    assert.equal(r.critical.gapSeconds, 2)
+  }
+  const many = await critical([a, ...Array.from({ length: 20_000 }, (_, i) => z(5, i + 10)), b])
+  assert.equal(many.summary.criticalSeconds, 10)
+  const none = await critical([z(5, 1), z(5, 2)])
+  assert.equal(none.summary.criticalSeconds, 0)
+  assert.ok(!kinds(none).includes('critical-path'))
+})
+
 test('utilization and heatmap agree with task time', async () => {
   const { a } = await load(sample('skew'))
   const area = a.util.running.reduce((x, y) => x + y, 0) * a.util.dt
