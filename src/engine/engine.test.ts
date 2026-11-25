@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { TraceParser, parseStream } from './parse.ts'
-import { buildTrace, describeType, parseTaskId } from './build.ts'
+import { buildTrace, describeType, incomplete, parseTaskId } from './build.ts'
 import { analyze, quantile, type Analysis } from './analyze.ts'
 import { aggregateRow, buildRows, firstVisible, levelFor, MAX_AGG_BUCKETS, taskAt } from './lod.ts'
 import { compare } from './compare.ts'
@@ -132,6 +132,28 @@ test('truncated object at the end still analyzes everything before it', async ()
   const t = buildTrace(await parseStream(streamOf(new TextEncoder().encode(text))))
   assert.equal(t.n, 1)
   assert.ok(t.issues.some((i) => i.code === 'truncated'))
+})
+
+test('missing data is called incomplete; a complete trace is not', async () => {
+  const full = JSON.stringify([...task('a', 'worker:1', 0, 1000, 1), ...task('a', 'worker:1', 2000, 1000, 2)])
+  const of = async (bytes: Uint8Array) => incomplete(buildTrace(await parseStream(streamOf(bytes))).issues)
+  const enc = (s: string) => new TextEncoder().encode(s)
+  assert.equal(await of(enc(full)), null)
+  assert.equal(await of(enc(`{"traceEvents":${full}}`)), null)
+  assert.match((await of(enc(full.slice(0, -1))))!.title, /is incomplete/)
+  assert.match((await of(gzipSync(enc(full)).subarray(0, -12)))!.title, /is incomplete/)
+  assert.match((await of(enc(full.replace('"ts":2000', '"ts":null'))))!.title, /is incomplete/)
+  assert.match((await of(enc(full.replace(']', ',7]'))))!.title, /may be incomplete/)
+  for (const f of ['gpu_starved', 'gpu_fixed', 'retries', 'skew', 'small', 'small_fixed']) assert.equal(await of(sample(f)), null, f)
+  for (const f of ['ray-2.60-actors-and-failure.json', 'ray-2.60-async-actor.json', 'ray-2.60-nested.json', 'ray-2.60-retries.json', 'format-derived-dashboard.json']) assert.equal(await of(fixture(f)), null, f)
+})
+
+test('reports say a truncated trace is incomplete before any number', async () => {
+  const cut = asBytes(task('a', 'worker:1', 0, 1000, 1)).subarray(0, -1)
+  const { trace, a } = await load(cut)
+  const html = reportHtml(trace, a, DEFAULTS, 'https://x.test/app')
+  assert.ok(html.indexOf('This trace is incomplete') > 0 && html.indexOf('This trace is incomplete') < html.indexOf('Job time'))
+  assert.equal(reportJson(trace, a, DEFAULTS).complete, false)
 })
 
 test('task IDs: actor and job are recovered from the bytes, Ray Data names are simplified', () => {
