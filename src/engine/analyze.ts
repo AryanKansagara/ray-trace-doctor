@@ -10,6 +10,7 @@ export type DiagnosisKind =
 export interface Diagnosis {
   id: string
   kind: DiagnosisKind
+  about: string[] // task types it names, so two runs' findings can be matched
   severity: 'critical' | 'warning' | 'info'
   title: string
   summary: string
@@ -407,6 +408,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       const fnName = /MapBatches\((.*)\)/.exec(stageName)?.[1]
       push({
         kind: 'gpu-idle',
+        about: [],
         title: `GPU workers idle ${pct(idleShare)} of the time they were held`,
         summary: `${fmtS(lost)} of GPU time was reserved but did nothing.`,
         evidence,
@@ -468,6 +470,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       }
       push({
         kind: 'starved-stage',
+        about: [types[producer.type].label, types[consumer.type].label],
         title: `${producer.label} is starving ${consumer.label}`,
         summary: `${producer.label} is capped at ${producer.peak} concurrent and runs flat out. ${consumer.label} could take ${demand.toFixed(1)} tasks/s but only gets ${rateA.toFixed(1)}.`,
         evidence: [
@@ -551,6 +554,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       const windowTotal = sum(windows.map(([x, y]) => y - x))
       push({
         kind: 'idle-while-work',
+        about: [],
         title: `Idle slots while work was waiting`,
         summary: `For ${fmtS(windowTotal)} an average of ${freeAvg.toFixed(1)} of ${slots} slots sat empty while tasks were ${backlogKnown ? 'queued' : 'evidently still coming'}.`,
         evidence: [
@@ -623,6 +627,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       if (tailOnly > 0.01 * T) evidence.push(`The last ${fmtS(tailOnly)} of the job ran nothing but stragglers.`)
       push({
         kind: 'straggler',
+        about: [],
         title: `${found.length} straggler task${found.length > 1 ? 's' : ''}`,
         summary: `${fmtS(lost)} of work above each task type's median duration.`,
         evidence,
@@ -659,6 +664,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
     for (const { st, share, lost: lostT, rows } of skewed.slice(0, 2)) {
       push({
         kind: 'task-skew',
+        about: [types[st.type].label],
         title: `Data skew in ${st.label}`,
         summary: `The slowest 10% of tasks hold ${pct(share)} of its time.`,
         evidence: [
@@ -715,6 +721,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       if (slowRatio >= 1.5 && slowest) ev.push(`Slowest worker's median is ${slowRatio.toFixed(1)}× the stage median: look at that node.`)
       push({
         kind: 'worker-skew',
+        about: [types[st.type].label],
         title: `Uneven load across ${st.label} workers`,
         summary: `A few workers carried this stage while ${light.length} barely worked.`,
         evidence: ev,
@@ -767,6 +774,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       if (cold) evidence.push(`${pct(coldShare)} of it falls on each worker's first task, which points at imports on a cold worker, not at data size.`)
       push({
         kind: kindName,
+        about: cold ? [types[st.type].label, 'cold start'] : [types[st.type].label],
         title: cold ? `${st.label}: slow first task on each worker` : title(st, share),
         summary: cold ? `${fmtS(v)} of ${st.label}'s deserialization is cold start: importing your code on a fresh worker.` : `${fmtS(v)} went to moving data, not computing.`,
         evidence,
@@ -841,6 +849,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       const avgFail = lost / failed.length
       push({
         kind: 'failed-attempts',
+        about: [],
         title: `${fmtS(lost)} thrown away on failed attempts that Ray retried`,
         summary: `${retriedTasks} task${retriedTasks > 1 ? 's' : ''} had to run again. Each failed attempt got ${fmtS(avgFail)} in on average before its work was discarded.`,
         evidence,
@@ -895,6 +904,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       for (let i = 0; i < n && spans.length < MAX_HIGHLIGHT; i++) if (typeOf[i] === st.type) spans.push(i)
       push({
         kind: 'too-small',
+        about: [types[st.type].label],
         title: `${st.label} tasks are too small`,
         summary: `Overhead per task (${fmtS(avgOver)}) is ${avgOver > avgExec ? 'more than' : 'close to'} the work it wraps (${fmtS(avgExec)}).`,
         evidence,
@@ -920,6 +930,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
     for (let i = 0; i < n && spans.length < MAX_HIGHLIGHT; i++) if (typeOf[i] === st.type) spans.push(i)
     push({
       kind: 'serial-stage',
+      about: [types[st.type].label],
       title: `${st.label} never ran in parallel`,
       summary: `${st.n} tasks, one at a time, while ${slots} slots were available.`,
       evidence: [`Peak concurrency 1 across ${fmtS(st.last - st.first)}: ${fmtS(st.total)} of work.`],
@@ -945,6 +956,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
     const lost = shorter * Math.max(0, slots - Math.max(a.peak, b.peak)) + gapT * slots
     push({
       kind: 'barrier',
+      about: [types[a.type].label, types[b.type].label],
       title: `${a.label} and ${b.label} run as separate phases`,
       summary: `Almost no overlap, so nothing flows through until ${a.label} has finished.`,
       evidence: [
@@ -988,6 +1000,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       for (const w of big.slice(0, 8)) gaps.push(-1, w.a, w.b)
       push({
         kind: 'low-utilization',
+        about: [],
         severity: 'info',
         title: `Under half of the cluster in use for ${pct(coverage / T)} of the job`,
         summary: `Overall ${pct(busySeconds / (slots * T))} of ${slots} slots were busy.`,
@@ -1011,6 +1024,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
     const top = ranked[0]
     push({
       kind: 'critical-path',
+      about: [],
       severity: 'info',
       title: `The job's longest chain runs through ${types[top[0]].label}`,
       summary: `${pct(top[1] / Math.max(1e-9, criticalSeconds + pathGap))} of a ${fmtS(criticalSeconds + pathGap)} chain, against ${fmtS(T)} wall time.`,
