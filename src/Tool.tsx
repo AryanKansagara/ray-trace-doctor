@@ -114,10 +114,11 @@ function SettingsPanel({ s, set, jobs }: { s: Settings; set: (p: Partial<Setting
         <Field label="Straggler cutoff" hint="Modified z-score. 3.5 is the textbook value."><input type="number" min={1} step={0.5} value={s.stragglerK} onChange={(e) => set({ stragglerK: Number(e.target.value) || 3.5 })} /></Field>
         <Field label="Shortest gap counted (ms)"><input type="number" min={0} value={s.minGapMs} onChange={(e) => set({ minGapMs: Math.max(0, Number(e.target.value) || 0) })} /></Field>
         <Field label="Target task size (ms)" hint="Batch sizes in the too-small card aim for this."><input type="number" min={1} value={s.targetTaskMs} onChange={(e) => set({ targetTaskMs: Number(e.target.value) || 100 })} /></Field>
-        {jobs.length > 1 && (
+        {(jobs.length > 1 || s.job) && (
           <Field label="Job" hint="ray timeline dumps the whole cluster.">
             <select value={s.job} onChange={(e) => set({ job: e.target.value })}>
               <option value="">All jobs</option>
+              {s.job && !jobs.some((j) => j.id === s.job) && <option value={s.job}>{s.job} (not in this trace)</option>}
               {jobs.map((j) => <option key={j.id} value={j.id}>{j.id} ({j.tasks} tasks)</option>)}
             </select>
           </Field>
@@ -297,6 +298,7 @@ export default function Tool() {
   const exportBase = (trace?.name ?? 'trace').replace(/\.json(\.gz)?$/, '')
   const showEmpty = !data && a.phase !== 'loading'
   const errors = trace?.issues.filter((i) => i.severity === 'error') ?? []
+  const jobNote = trace?.issues.find((i) => i.code === 'job-missing')
   const lostTop = analysis?.diagnoses[0]
   const sel = selected !== null && trace && selected < trace.n ? selected : null
 
@@ -363,6 +365,8 @@ export default function Tool() {
               <label className="btn btn-ghost btn-sm">Open another<input type="file" accept=".json,.gz" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); e.target.value = '' }} /></label>
             </div>
           </section>
+
+          {jobNote && <p className="err" role="note">{jobNote.message}</p>}
 
           <div className="split">
             <aside className="rail" aria-label="Diagnoses">
@@ -434,6 +438,7 @@ export default function Tool() {
                   {slots.b.data && !comparison && <p className="err" role="alert">{slots.b.data.name} has no Ray tasks to compare.</p>}
                   {comparison && (
                     <>
+                      {slots.b.data!.trace.issues.filter((i) => i.code === 'job-missing').map((i) => <p key={i.code} className="err" role="note">{slots.b.data!.name}: {i.message}</p>)}
                       <CompareView c={comparison} nameA={data?.name ?? trace.name} nameB={slots.b.data?.name ?? ''} />
                       <button className="btn btn-ghost btn-sm" onClick={() => clear('b')}>Clear comparison</button>
                     </>

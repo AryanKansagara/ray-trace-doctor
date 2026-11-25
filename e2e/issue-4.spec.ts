@@ -2,7 +2,7 @@ import { expect, heading, id, json, stat, tab, task, test, upload, worked } from
 
 const two = json([...worked, ...task('other', 'w3', 40, 5, id(9, '02000000'))])
 
-test.fail('#4 a job filter from one dump does not blank a trace without that job', async ({ page }) => {
+test('#4 a job filter from one dump does not blank a trace without that job', async ({ page }) => {
   await page.goto('/app')
   await upload(page, 'two-jobs.json', two)
   await tab(page, 'Settings')

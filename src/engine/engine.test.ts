@@ -152,6 +152,20 @@ test('multi-job dumps warn, and a job filter restricts the analysis', () => {
   const raw = p.finish()
   assert.ok(buildTrace(raw).issues.some((i) => i.code === 'multi-job'))
   assert.equal(buildTrace(raw, 'x', '02000000').n, 1)
+  assert.ok(!buildTrace(raw, 'x', '02000000').issues.some((i) => i.code === 'job-missing'))
+})
+
+test('a job filter for a job this trace does not have is reported and not applied', () => {
+  const p = new TraceParser()
+  p.push(asBytes([...task('a', 'worker:1', 0, 1000, 1), ...task('a', 'worker:1', 2000, 1000, 2)]))
+  const raw = p.finish()
+  const t = buildTrace(raw, 'x', '02000000')
+  assert.equal(t.n, 2)
+  assert.equal(t.duration, 0.003)
+  assert.match(t.issues.find((i) => i.code === 'job-missing')!.message, /job 02000000/)
+  const empty = new TraceParser()
+  empty.push(asBytes([]))
+  assert.deepEqual(buildTrace(empty.finish(), 'x', '02000000').issues.map((i) => i.code), ['no-tasks'])
 })
 
 test('real GPU-starved Ray Data trace: blames CPU preprocessing for idle GPU actors', async () => {
