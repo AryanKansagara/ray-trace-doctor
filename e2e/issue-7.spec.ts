@@ -21,13 +21,13 @@ async function compare(page: Page, before: unknown, after: unknown) {
   return page.locator('.cmp-lists > div') // resolved, still there, new
 }
 
-test.fail('#7 task names that differ only in digits are different findings', async ({ page }) => {
+test('#7 task names that differ only in digits are different findings', async ({ page }) => {
   const lists = await compare(page, small(['score_v1', 'score_v2']), small(['score_v2']))
   await expect(lists.nth(0)).toContainText('score_v1 tasks are too small')
   await expect(lists.nth(1)).toContainText('score_v2 tasks are too small')
 })
 
-test.fail('#7 a singular count is still the same finding', async ({ page }) => {
+test('#7 a singular count is still the same finding', async ({ page }) => {
   const lists = await compare(page, stragglers(2), stragglers(1))
   await expect(lists.nth(1)).toContainText('1 straggler task')
   await expect(lists.nth(0)).not.toContainText('straggler')

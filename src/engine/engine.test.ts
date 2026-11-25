@@ -459,3 +459,29 @@ test('GPU workers are held from their own first span, on paper', async () => {
   // Held 90-100, idle 2 of those 10 s: 2% of the job, but 20% of the hold.
   assert.match((await card([gpu('worker:a', 2, 90, 8)])).title, /idle 20%/)
 })
+
+test('compare matches findings by kind and task type, not by title text', async () => {
+  const small = (names: string[]) => {
+    const ev: unknown[] = []
+    let k = 0
+    for (const n of names) for (let i = 0; i < 400; i++, k++) ev.push(...task(n, 'worker:1', k * 5000, 4000, k + 1, 2000, 1000))
+    return ev
+  }
+  const an = async (ev: unknown[]) => (await load(asBytes(ev))).a
+  const v1 = await an(small(['score_v1']))
+  const v2 = await an(small(['score_v2']))
+  const both = await an(small(['score_v1', 'score_v2']))
+  const has = (list: string[], t: string) => list.some((x) => x.startsWith(`${t} tasks are too small`))
+  const fixed = compare(both, v2)
+  assert.ok(has(fixed.resolved, 'score_v1') && has(fixed.remaining, 'score_v2') && !has(fixed.resolved, 'score_v2'))
+  const moved = compare(v1, v2)
+  assert.ok(has(moved.resolved, 'score_v1') && has(moved.introduced, 'score_v2') && !has(moved.remaining, 'score_v2'))
+  // Two stragglers, then one: singular, same finding.
+  const slow = (n: number) => Array.from({ length: 20 }, (_, i) => span('task::s', `worker:${i}`, 0, i < n ? 10e6 : 1e6, i + 1))
+  const s = compare(await an(slow(2)), await an(slow(1)))
+  assert.ok(s.remaining.includes('1 straggler task') && !s.resolved.some((t) => t.includes('straggler')) && !s.introduced.some((t) => t.includes('straggler')))
+  // 1.20 s thrown away, then 900 ms: another unit, same finding.
+  const failed = (d: number) => [...task('load', 'worker:a', 0, d, 1), ...task('load', 'worker:a', d, 1e6, 1)]
+  const w = compare(await an(failed(1.2e6)), await an(failed(0.9e6)))
+  assert.ok(w.remaining.some((t) => t.startsWith('900.0 ms thrown away')) && !w.resolved.length)
+})

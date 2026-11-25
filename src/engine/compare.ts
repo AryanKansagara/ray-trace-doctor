@@ -42,7 +42,7 @@ export function compare(a: Analysis, b: Analysis): Comparison {
   const jobBefore = a.summary.jobSeconds
   const jobAfter = b.summary.jobSeconds
   // Same finding, new numbers: "GPU workers idle 91%" then "74%" is still there, not resolved and new.
-  const kinds = (x: Analysis) => new Map(x.diagnoses.filter((d) => d.kind !== 'critical-path').map((d) => [d.title.replace(/\d+(\.\d+)?%?/g, '#'), d.title]))
+  const kinds = (x: Analysis) => new Map(x.diagnoses.filter((d) => d.kind !== 'critical-path').map((d) => [JSON.stringify([d.kind, ...d.about]), d.title]))
   const ka = kinds(a)
   const kb = kinds(b)
   const top = a.diagnoses.find((d) => d.saved.high > 0)
