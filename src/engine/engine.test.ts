@@ -8,7 +8,7 @@ import { analyze, quantile, type Analysis } from './analyze.ts'
 import { aggregateRow, buildRows, firstVisible, levelFor, MAX_AGG_BUCKETS, taskAt } from './lod.ts'
 import { compare } from './compare.ts'
 import { esc, reportHtml, reportJson } from './report.ts'
-import { decodeSettings, DEFAULTS, encodeSettings, sanitize } from './settings.ts'
+import { allowedOrDefault, decodeSettings, DEFAULTS, encodeSettings, MAX_TEXT, sanitize } from './settings.ts'
 import { synthTrace } from './synth.ts'
 
 const here = new URL('.', import.meta.url)
@@ -386,6 +386,24 @@ test('share URL holds settings only, and hostile input is dropped', () => {
   assert.equal(decodeSettings('#s=!!!'), null)
   assert.deepEqual(sanitize({ gpusPerWorker: -1, slots: 'x', evil: 1, trace: [1, 2] }), DEFAULTS)
   assert.ok(!('trace' in (sanitize({ trace: [1] }) as object)))
+})
+
+test('numbers the settings panel forbids fall back to the default, one field at a time', () => {
+  const bad = { gpusPerWorker: [0, 0.09, -1], slots: [1e-9, 0.5, -2], stragglerK: [0, 0.99, -3.5], minGapMs: [-1], targetTaskMs: [0, 0.5, -100] } as const
+  for (const [key, values] of Object.entries(bad) as [keyof typeof bad, readonly number[]][]) {
+    for (const v of [...values, NaN, Infinity]) {
+      assert.deepEqual(sanitize({ [key]: v, gpuPatterns: 'kept' }), { ...DEFAULTS, gpuPatterns: 'kept' }, `${key} ${v}`)
+      assert.equal(allowedOrDefault(key, v), DEFAULTS[key], `${key} ${v}`)
+    }
+  }
+  const good = { gpusPerWorker: [0.1, 0.5, 8], slots: [0, 1, 2.5, 4096], stragglerK: [1, 10], minGapMs: [0, 0.5, 1e6], targetTaskMs: [1, 1.5, 1e7] } as const
+  for (const [key, values] of Object.entries(good) as [keyof typeof good, readonly number[]][]) {
+    for (const v of values) {
+      const s = { ...DEFAULTS, [key]: allowedOrDefault(key, v), gpuNodes: 'n'.repeat(MAX_TEXT) }
+      assert.equal(s[key], v)
+      assert.deepEqual(decodeSettings(`#s=${encodeSettings(s)}`), s, `${key} ${v}`)
+    }
+  }
 })
 
 // ---------- Retries and nested tasks, from real Ray 2.60 traces made by scripts/gen_traces.py ----------
