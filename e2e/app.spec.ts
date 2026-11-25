@@ -233,5 +233,5 @@ test('a trace never leaves the page', async ({ page, outside }) => {
   await page.getByLabel('GPU task types').fill('save')
   await expect(stat(page, 'GPU workers')).toHaveText('1')
   expect(posts).toEqual([])
-  expect(outside.filter((u) => !/^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(u)), 'fonts are issue #10').toEqual([])
+  expect(outside).toEqual([])
 })
