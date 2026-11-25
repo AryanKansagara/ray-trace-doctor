@@ -466,7 +466,7 @@ export default function Tool() {
                     <dt>File</dt><dd>{trace.name}</dd>
                     <dt>Size</dt><dd>{fmtBytes(trace.bytes)} decompressed, {trace.events.toLocaleString('en-US')} events</dd>
                     <dt>Parse + analyze</dt><dd>{data?.ms ? `${(data.ms / 1000).toFixed(2)} s, in a background worker` : '-'}</dd>
-                    <dt>Spans</dt><dd>{trace.n.toLocaleString('en-US')} task spans, {trace.submits.length.toLocaleString('en-US')} submit spans</dd>
+                    <dt>Spans</dt><dd>{trace.n.toLocaleString('en-US')} task spans, {trace.submits.length.toLocaleString('en-US')} submit spans{trace.submitsMixed ? ', from every job in the dump' : ''}</dd>
                     <dt>Nodes</dt><dd>{trace.nodes.map((n) => n.label).join(', ')}</dd>
                     <dt>Workers</dt><dd>{trace.workers.filter((w) => !w.isDriver && !w.system).length} user, {trace.workers.filter((w) => w.system).length} Ray internal, {trace.workers.filter((w) => w.isDriver).length} driver, {trace.workers.filter((w) => w.actorId && !w.system).length} hosting actors</dd>
                     <dt>Critical path</dt><dd>{fmtS(analysis.summary.criticalSeconds)} estimated, including {fmtS(analysis.critical.gapSeconds)} of gaps</dd>

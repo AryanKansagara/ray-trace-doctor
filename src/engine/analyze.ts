@@ -295,9 +295,9 @@ export function analyze(trace: Trace, s: Settings): Analysis {
   const busySeconds = sum(workers.map((x) => x.busy))
 
   // Backlog. Submissions carry no task IDs, so depth is (submitted so far) minus (started so far),
-  // and only meaningful when nearly every task had a submit span.
+  // and only meaningful when nearly every task had a submit span and no other job's are among them.
   const userTasks = sum(workStats.map((x) => x.n))
-  const backlogKnown = trace.submits.length >= n * 0.8 && trace.submits.length > 0
+  const backlogKnown = !trace.submitsMixed && trace.submits.length >= n * 0.8 && trace.submits.length > 0
   let backlog: Float64Array | null = null
   if (backlogKnown) {
     backlog = new Float64Array(B)
@@ -515,7 +515,8 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       }
     } else {
       for (const st of stages) {
-        if (st.peak < 1) continue
+        // A serial stage is always at its peak. When submissions exist but cannot be read, it is no sign of a queue.
+        if (st.peak < (trace.submitsMixed ? 2 : 1)) continue
         const cum = new Float64Array(B)
         for (let i = 0; i < n; i++) if (typeOf[i] === st.type) addSpread(cum, 0, start[i], start[i] + dur[i], 1)
         for (let k = 0; k < B; k++) {
@@ -568,7 +569,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
         suggestion: 'Check why waiting tasks did not fit: per-task `num_cpus`/`num_gpus`/`memory` larger than what is free, a `concurrency` cap on the stage, or a placement constraint. Lowering a too-large `num_cpus` often unlocks the slots immediately.',
         code: `@ray.remote(num_cpus=0.5)  # match what the task really uses\ndef task(...): ...\n\n# Ray Data: raise the cap on the pegged stage\nds.map_batches(fn, concurrency=...)`,
         docUrl: 'https://docs.ray.io/en/latest/ray-core/scheduling/resources.html',
-        inferred: [backlogKnown ? 'Ray does not link submit_task spans to task IDs: backlog = submitted so far − started so far, counted only while tasks are still starting.' : 'No per-task submission spans in this trace, so "work exists" is inferred from stage saturation.', ...slotsNote],
+        inferred: [backlogKnown ? 'Ray does not link submit_task spans to task IDs: backlog = submitted so far − started so far, counted only while tasks are still starting.' : `${trace.submitsMixed ? 'Submissions here may belong to jobs the filter hides' : 'No per-task submission spans in this trace'}, so "work exists" is inferred from stage saturation.`, ...slotsNote],
         spans: [],
         gaps: limit(gaps),
         focus: windows.length ? [windows[0][0], windows[windows.length - 1][1]] : [jobStart, jobEnd],
