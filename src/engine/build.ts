@@ -172,10 +172,16 @@ export function buildTrace(raw: Raw, name = 'trace', onlyJob?: string): Trace {
   // Ordering tasks by start, optionally restricted to one job (`ray timeline` dumps the whole cluster).
   let order = Array.from({ length: total }, (_, i) => i)
   if (onlyJob) {
-    order = order.filter((s) => {
+    const inJob = order.filter((s) => {
       const id = raw.taskId[rowOf[s]]
       return id ? id.slice(40) === onlyJob : false
     })
+    if (inJob.length || !total) order = inJob
+    else {
+      // Job IDs belong to one cluster: a filter saved for another dump says nothing about this one.
+      add('job-missing', 'warning', `The job filter in settings is not applied: this trace has no tasks from job ${onlyJob}.`)
+      onlyJob = undefined
+    }
   }
   order.sort((a, b) => raw.ts[rowOf[a]] - raw.ts[rowOf[b]])
   const n = order.length
