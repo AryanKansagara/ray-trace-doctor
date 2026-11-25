@@ -11,6 +11,7 @@ export interface Loaded {
   trace: Trace
   analysis: Analysis | null
   ms: number
+  name: string // of this trace: LoadState.name is whatever is loading
   sampleId?: string
 }
 
@@ -30,6 +31,7 @@ const empty: LoadState = { phase: 'idle', bytes: 0, events: 0, size: 0, analyzin
 export function useSession() {
   const worker = useRef<Worker | null>(null)
   const ids = useRef({ a: 0, b: 0 })
+  const loading = useRef<Record<Slot, boolean>>({ a: false, b: false })
   const sampleIds = useRef<Partial<Record<Slot, string>>>({})
   const [slots, setSlots] = useState<Record<Slot, LoadState>>({ a: empty, b: empty })
 
@@ -40,14 +42,19 @@ export function useSession() {
       const m = ev.data
       const slot = m.slot as Slot
       if (m.id !== ids.current[slot]) return
+      if (m.kind !== 'progress') loading.current[slot] = false
       setSlots((all) => {
         const cur = all[slot]
         if (m.kind === 'progress') {
           return { ...all, [slot]: { ...cur, bytes: m.bytes, events: m.events, size: m.size || cur.size, analyzing: m.phase === 'analyzing' } }
         }
         if (m.kind === 'error') return { ...all, [slot]: { ...cur, phase: 'error', error: m.message } }
-        const trace = m.trace ?? cur.data?.trace
-        return { ...all, [slot]: { ...cur, phase: 'ready', analyzing: false, data: { trace, analysis: m.analysis, ms: m.ms || cur.data?.ms || 0, sampleId: sampleIds.current[slot] } } }
+        if (m.loaded) {
+          return { ...all, [slot]: { ...cur, phase: 'ready', analyzing: false, data: { trace: m.trace, analysis: m.analysis, ms: m.ms, name: cur.name, sampleId: sampleIds.current[slot] } } }
+        }
+        // A re-analysis of the trace already shown.
+        if (!cur.data) return all
+        return { ...all, [slot]: { ...cur, data: { ...cur.data, trace: m.trace ?? cur.data.trace, analysis: m.analysis } } }
       })
     }
     w.onerror = (e) => setSlots((all) => ({ ...all, a: { ...all.a, phase: all.a.phase === 'loading' ? 'error' : all.a.phase, error: e.message } }))
@@ -58,6 +65,7 @@ export function useSession() {
 
   const load = useCallback((slot: Slot, source: Source, name: string, settings: Settings, sampleId?: string) => {
     const id = ++ids.current[slot]
+    loading.current[slot] = true
     sampleIds.current[slot] = sampleId
     setSlots((all) => ({ ...all, [slot]: { ...empty, phase: 'loading', name, data: all[slot].data } }))
     // A fresh worker may not have mounted yet on first render.
@@ -65,12 +73,14 @@ export function useSession() {
   }, [])
 
   const reanalyze = useCallback((slot: Slot, settings: Settings) => {
-    const id = ++ids.current[slot]
+    // During a load this keeps the load's id: the worker finishes that load with these settings.
+    const id = loading.current[slot] ? ids.current[slot] : ++ids.current[slot]
     send({ kind: 'analyze', slot, id, settings })
   }, [])
 
   const clear = useCallback((slot: Slot) => {
     ids.current[slot]++
+    loading.current[slot] = false
     setSlots((all) => ({ ...all, [slot]: empty }))
   }, [])
 
