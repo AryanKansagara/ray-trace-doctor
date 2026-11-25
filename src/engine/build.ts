@@ -71,6 +71,17 @@ export function parseTaskId(id: string): { actorId: string | null; jobId: string
   return { actorId: actor.slice(0, 24) === 'f'.repeat(24) ? null : actor, jobId: id.slice(40) }
 }
 
+// Issues that mean part of the trace is missing, so every figure covers only what is left.
+const LOST = new Set(['truncated', 'gzip', 'bad-json', 'bad-timing'])
+const MAYBE_LOST = new Set(['not-object', 'gcs-cap']) // not orphan-phases: async actors have them in complete traces
+
+export function incomplete(issues: Issue[]): { title: string; issues: Issue[] } | null {
+  const hit = issues.filter((i) => LOST.has(i.code) || MAYBE_LOST.has(i.code))
+  if (!hit.length) return null
+  const sure = hit.some((i) => LOST.has(i.code))
+  return { title: `This trace ${sure ? 'is' : 'may be'} incomplete. The numbers below cover only the part that was read.`, issues: hit }
+}
+
 export function buildTrace(raw: Raw, name = 'trace', onlyJob?: string): Trace {
   const issues: Issue[] = raw.issues.map((i) => ({ ...i }))
   const add = (code: string, severity: Issue['severity'], message: string, count = 1) => issues.push({ code, severity, message, count })

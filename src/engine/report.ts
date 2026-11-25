@@ -1,7 +1,7 @@
 // Shareable exports. Aggregates and diagnoses only, never the spans of the trace itself. Everything
 // from the trace is escaped: task names are arbitrary strings from someone else's cluster.
 import { fmtS, type Analysis } from './analyze.ts'
-import type { Trace } from './build.ts'
+import { incomplete, type Trace } from './build.ts'
 import { encodeSettings, type Settings } from './settings.ts'
 
 export const esc = (s: string) =>
@@ -12,6 +12,7 @@ export function reportJson(trace: Trace, a: Analysis, settings: Settings) {
     tool: 'Ray Trace Doctor',
     note: 'Time-saved figures are estimates. Diagnoses overlap, so do not add them up.',
     trace: { name: trace.name, bytes: trace.bytes, events: trace.events, nodes: trace.nodes.map((n) => n.label), workers: a.summary.workers },
+    complete: !incomplete(trace.issues),
     settings,
     summary: a.summary,
     diagnoses: a.diagnoses.map((d) => ({
@@ -82,6 +83,8 @@ ${d.docUrl ? `<p><a href="${esc(d.docUrl)}">Ray docs</a></p>` : ''}</article>`
     .slice(0, 30)
     .map((t) => `<tr><td>${esc(t.label)}</td><td>${t.n}</td><td>${fmtS(t.total)}</td><td>${fmtS(t.p50)}</td><td>${fmtS(t.p95)}</td><td>${fmtS(t.max)}</td><td>${t.peak}</td></tr>`)
     .join('')
+  const missing = incomplete(trace.issues)
+  const warning = missing ? `<article class="critical" role="note"><h3>${esc(missing.title)}</h3><ul>${missing.issues.map((i) => `<li>${esc(i.message)}${i.count > 1 ? ` (${i.count})` : ''}</li>`).join('')}</ul></article>` : ''
   const issues = trace.issues.length ? `<h2>Trace notes</h2><ul>${trace.issues.map((i) => `<li><b>${esc(i.severity)}</b> ${esc(i.message)}${i.count > 1 ? ` (${i.count})` : ''}</li>`).join('')}</ul>` : ''
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ray Trace Doctor report: ${esc(trace.name)}</title>
 <style>
@@ -100,7 +103,7 @@ footer{margin-top:48px;font-size:12px;color:var(--mut)}
 </style></head><body><main>
 <div class="eyebrow">Ray Trace Doctor report</div><h1>${esc(trace.name)}</h1>
 <p style="color:var(--mut)">${s.tasks.toLocaleString('en-US')} tasks on ${s.workers} workers across ${s.nodes} node${s.nodes > 1 ? 's' : ''}. Time-saved figures are estimates, and diagnoses overlap, so do not add them up.</p>
-<div class="stats"><div><b>${fmtS(s.jobSeconds)}</b><span>Job time</span></div><div><b>${(s.utilization * 100).toFixed(0)}%</b><span>of ${s.slots} slots${s.slotsInferred ? ' (inferred)' : ''} busy</span></div><div><b>${s.parallelism.toFixed(1)}</b><span>Average parallelism</span></div><div><b>${s.gpuWorkers}</b><span>GPU workers (inferred)</span></div></div>
+${warning}<div class="stats"><div><b>${fmtS(s.jobSeconds)}</b><span>Job time</span></div><div><b>${(s.utilization * 100).toFixed(0)}%</b><span>of ${s.slots} slots${s.slotsInferred ? ' (inferred)' : ''} busy</span></div><div><b>${s.parallelism.toFixed(1)}</b><span>Average parallelism</span></div><div><b>${s.gpuWorkers}</b><span>GPU workers (inferred)</span></div></div>
 <h2>Running tasks over time</h2>${utilSvg(a)}
 <h2>Worker utilization</h2>${heatSvg(a)}
 <h2>Diagnoses</h2>${cards}

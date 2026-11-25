@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Footer, Nav } from './App.tsx'
 import { fmtS, type Diagnosis } from './engine/analyze.ts'
+import { incomplete, type Trace } from './engine/build.ts'
 import { compare } from './engine/compare.ts'
 import { reportHtml, reportJson } from './engine/report.ts'
 import { decodeSettings, DEFAULTS, encodeSettings, sanitize, type Settings } from './engine/settings.ts'
@@ -59,6 +60,17 @@ function Hl({ line }: { line: string }) {
 
 // Engine text marks code with backticks; render those parts as <code>.
 const Ticks = ({ text }: { text: string }) => <>{text.split('`').map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part))}</>
+
+function Incomplete({ trace, name }: { trace: Trace; name?: string }) {
+  const missing = incomplete(trace.issues)
+  if (!missing) return null
+  return (
+    <div className="err" role="alert">
+      <b>{name && `${name}: `}{missing.title}</b>
+      <ul>{missing.issues.map((i) => <li key={i.code}><Ticks text={i.message} />{i.count > 1 ? ` (${i.count.toLocaleString('en-US')})` : ''}</li>)}</ul>
+    </div>
+  )
+}
 
 function DiagCard({ d, active, job, onClick }: { d: Diagnosis; active: boolean; job: number; onClick: () => void }) {
   const ref = useRef<HTMLElement>(null)
@@ -351,6 +363,7 @@ export default function Tool() {
 
       {trace && analysis && (
         <main className="work">
+          <Incomplete trace={trace} />
           <section className="statbar" aria-label="Job summary">
             <div className="stat name">
               <span className="eyebrow"><i />{sampleInfo?.provenance ?? 'Your trace, local only'}</span>
@@ -375,7 +388,7 @@ export default function Tool() {
                 <span className="mono-sm">J / K. They overlap: do not add them up.</span>
               </div>
               <div className="rail-list">
-                {analysis.diagnoses.length === 0 && <p className="fine pad">Nothing stands out. This job kept its workers busy.</p>}
+                {analysis.diagnoses.length === 0 && <p className="fine pad">{incomplete(trace.issues) ? 'Nothing stands out in the part of the trace that was read.' : 'Nothing stands out. This job kept its workers busy.'}</p>}
                 {analysis.diagnoses.map((d) => (
                   <DiagCard key={d.id} d={d} job={analysis.summary.jobSeconds} active={d.id === active} onClick={() => activate(d.id === active ? null : d)} />
                 ))}
@@ -439,6 +452,8 @@ export default function Tool() {
                   {comparison && (
                     <>
                       {slots.b.data!.trace.issues.filter((i) => i.code === 'job-missing').map((i) => <p key={i.code} className="err" role="note">{slots.b.data!.name}: {i.message}</p>)}
+                      <Incomplete trace={trace} name={data?.name} />
+                      <Incomplete trace={slots.b.data!.trace} name={slots.b.data!.name} />
                       <CompareView c={comparison} nameA={data?.name ?? trace.name} nameB={slots.b.data?.name ?? ''} />
                       <button className="btn btn-ghost btn-sm" onClick={() => clear('b')}>Clear comparison</button>
                     </>
