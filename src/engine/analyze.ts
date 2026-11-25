@@ -188,12 +188,12 @@ export function analyze(trace: Trace, s: Settings): Analysis {
   const gpuWorkers = workers.filter((x) => x.gpu)
   const actorWorkers = workers.filter((x) => trace.workers[x.worker].actorId)
 
-  // Concurrency by sweep. A task on an actor counts toward the actor's own held slot, not a new one.
+  // Concurrency by sweep over busy workers. Overlapping calls on one actor share the slot it holds.
   const sweep: [number, number, boolean][] = []
-  for (let i = 0; i < n; i++) {
-    if (!isUser(i)) continue
-    const stateless = !trace.workers[worker[i]].actorId
-    sweep.push([start[i], 1, stateless], [start[i] + dur[i], -1, stateless])
+  for (let w = 0; w < W; w++) {
+    const stateless = !trace.workers[w].actorId
+    const iv = busyIntervals[w]
+    for (let j = 0; j < iv.length; j += 2) sweep.push([iv[j], 1, stateless], [iv[j + 1], -1, stateless])
   }
   sweep.sort((a, b) => a[0] - b[0] || a[1] - b[1])
   let cur = 0
@@ -208,7 +208,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
   }
   const inferredSlots = Math.max(peak, peakStateless + actorWorkers.length, 1)
   const slots = s.slots > 0 ? s.slots : inferredSlots
-  const slotsNote = s.slots > 0 ? [] : [`Worker slots (${slots}) are inferred as peak concurrent stateless tasks plus long-lived actors. Set the real number in settings.`]
+  const slotsNote = s.slots > 0 ? [] : [`Worker slots (${slots}) are inferred as peak busy stateless workers plus long-lived actors. Set the real number in settings.`]
 
   // Utilization grid.
   const B = 480
@@ -228,14 +228,13 @@ export function analyze(trace: Trace, s: Settings): Analysis {
       if (r > l) arr[offset + k] += ((r - l) / dt) * scale
     }
   }
-  for (let i = 0; i < n; i++) {
-    if (!isUser(i)) continue
-    const a = start[i]
-    const b = a + dur[i]
-    addSpread(running, 0, a, b, 1)
-    const hi = heatIndex[worker[i]]
-    if (hi >= 0) addSpread(heat, hi * B, a, b, 1 / trace.workers[worker[i]].lanes)
-    if (gpuRun && statOf.get(worker[i])?.gpu) addSpread(gpuRun, 0, a, b, 1 / trace.workers[worker[i]].lanes)
+  for (const { worker: w, gpu } of workers) {
+    const iv = busyIntervals[w]
+    for (let j = 0; j < iv.length; j += 2) {
+      addSpread(running, 0, iv[j], iv[j + 1], 1)
+      if (heatIndex[w] >= 0) addSpread(heat, heatIndex[w] * B, iv[j], iv[j + 1], 1)
+      if (gpuRun && gpu) addSpread(gpuRun, 0, iv[j], iv[j + 1], 1)
+    }
   }
 
   // Per task type stats.

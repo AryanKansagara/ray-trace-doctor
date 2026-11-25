@@ -23,7 +23,7 @@ for (const [name, diagnosis] of SAMPLES) {
     expect(await c.locator('.evidence li').count()).toBeGreaterThan(0)
     await expect(c.getByText('What to try')).toBeVisible()
     await expect(page.locator('.stage canvas').first()).toBeVisible()
-    await expect(page.getByRole('img', { name: /^Running tasks over/ })).toBeVisible()
+    await expect(page.getByRole('img', { name: /^Busy workers over/ })).toBeVisible()
     await expect(page.getByRole('img', { name: /^Heatmap of/ })).toBeVisible()
     await tab(page, 'Flame summary')
     await expect(page.locator('.flame .fl').first()).toBeVisible()
