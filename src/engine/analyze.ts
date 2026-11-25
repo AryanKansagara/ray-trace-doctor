@@ -318,8 +318,9 @@ export function analyze(trace: Trace, s: Settings): Analysis {
   const pathTasks: number[] = []
   let pathGap = 0
   if (byEnd.length) {
-    let curTask = byEnd[byEnd.length - 1]
+    let at = byEnd.length - 1
     for (;;) {
+      const curTask = byEnd[at]
       onPath.add(curTask)
       pathTasks.push(curTask)
       const t = start[curTask]
@@ -330,11 +331,11 @@ export function analyze(trace: Trace, s: Settings): Analysis {
         if (start[byEnd[m]] + dur[byEnd[m]] <= t + 1e-9) lo = m + 1
         else hi = m
       }
-      if (lo === 0) break
-      const prev = byEnd[lo - 1]
-      if (onPath.has(prev)) break
+      // A zero-length task ends at its own start, so the search can find it again: always step back past it.
+      at = Math.min(lo, at) - 1
+      if (at < 0) break
+      const prev = byEnd[at]
       pathGap += Math.max(0, t - (start[prev] + dur[prev]))
-      curTask = prev
     }
     pathTasks.reverse()
   }
@@ -1020,7 +1021,7 @@ export function analyze(trace: Trace, s: Settings): Analysis {
   }
 
   // --- Critical-path-style estimate ----------------------------------------------------------------
-  if (pathTasks.length > 1) {
+  if (pathTasks.length > 1 && criticalSeconds + pathGap > 0) {
     const ranked = [...pathByType.entries()].sort((a, b) => b[1] - a[1])
     const top = ranked[0]
     push({
