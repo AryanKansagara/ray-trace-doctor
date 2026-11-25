@@ -41,7 +41,7 @@ function utilSvg(a: Analysis) {
   const h = 120
   const max = Math.max(a.summary.slots, ...running)
   const pts = running.map((v, i) => `${((i / (buckets - 1)) * w).toFixed(1)},${(h - (v / max) * h).toFixed(1)}`).join(' ')
-  return `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="Running tasks over time, out of ${a.summary.slots} slots"><polygon points="0,${h} ${pts} ${w},${h}" fill="#0066ff" fill-opacity=".14"/><polyline points="${pts}" fill="none" stroke="#0066ff" stroke-width="1.5"/></svg>`
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="Busy workers over time, out of ${a.summary.slots} slots"><polygon points="0,${h} ${pts} ${w},${h}" fill="#0066ff" fill-opacity=".14"/><polyline points="${pts}" fill="none" stroke="#0066ff" stroke-width="1.5"/></svg>`
 }
 
 function heatSvg(a: Analysis) {
@@ -104,7 +104,7 @@ footer{margin-top:48px;font-size:12px;color:var(--mut)}
 <div class="eyebrow">Ray Trace Doctor report</div><h1>${esc(trace.name)}</h1>
 <p style="color:var(--mut)">${s.tasks.toLocaleString('en-US')} tasks on ${s.workers} workers across ${s.nodes} node${s.nodes > 1 ? 's' : ''}. Time-saved figures are estimates, and diagnoses overlap, so do not add them up.</p>
 ${warning}<div class="stats"><div><b>${fmtS(s.jobSeconds)}</b><span>Job time</span></div><div><b>${(s.utilization * 100).toFixed(0)}%</b><span>of ${s.slots} slots${s.slotsInferred ? ' (inferred)' : ''} busy</span></div><div><b>${s.parallelism.toFixed(1)}</b><span>Average parallelism</span></div><div><b>${s.gpuWorkers}</b><span>GPU workers (inferred)</span></div></div>
-<h2>Running tasks over time</h2>${utilSvg(a)}
+<h2>Busy workers over time</h2>${utilSvg(a)}
 <h2>Worker utilization</h2>${heatSvg(a)}
 <h2>Diagnoses</h2>${cards}
 <h2>Task types</h2><div style="overflow:auto"><table><thead><tr><th>Type</th><th>Tasks</th><th>Total</th><th>p50</th><th>p95</th><th>Max</th><th>Peak</th></tr></thead><tbody>${types}</tbody></table></div>

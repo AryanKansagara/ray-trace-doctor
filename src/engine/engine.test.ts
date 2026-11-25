@@ -422,3 +422,20 @@ test('nested detection: a submit inside the span flags it, one after the span do
   const after = await load(asBytes([...task('parent', 'worker:p', 0, 1_000_000, 1), sub('worker:p', 1_500_000)]))
   assert.ok(!after.trace.issues.some((i) => i.code === 'nested-tasks'))
 })
+
+test('overlapping calls on one actor share its slot, on paper', async () => {
+  const call = (id: number, ts: number, dur: number) => ({ ...span('task::Api.call', 'worker:a', ts, dur), args: { task_id: `${id.toString(16).padStart(16, '0')}${'a'.repeat(24)}01000000` } })
+  // 8 calls, all 0-10 s: one slot, 10 of 10 s busy.
+  const full = (await load(asBytes(Array.from({ length: 8 }, (_, i) => call(i + 1, 0, 10e6))))).a
+  assert.equal(full.summary.slots, 1)
+  assert.equal(full.summary.utilization, 1)
+  assert.ok(Math.abs(Math.max(...full.util.running) - 1) < 1e-9)
+  // Calls 0-2 and 1-4 s, then 8-10 s, plus a stateless task 0-5 s: 2 slots, busy (4 + 2) + 5 = 11 of 20.
+  const mixed = (await load(asBytes([call(1, 0, 2e6), call(2, 1e6, 3e6), call(3, 8e6, 2e6), span('task::s', 'worker:b', 0, 5e6, 9)]))).a
+  assert.equal(mixed.summary.slots, 2)
+  assert.ok(Math.abs(mixed.summary.utilization - 0.55) < 1e-9)
+  assert.ok(Math.abs(mixed.util.running.reduce((x, y) => x + y, 0) * mixed.util.dt - 11) < 1e-6)
+  // At 3 s only one call runs; the actor is still fully busy.
+  const row = mixed.heat.rows.findIndex((w) => mixed.workers.find((x) => x.worker === w)!.busy > 5.5)
+  assert.ok(Math.abs(mixed.heat.data[row * mixed.heat.buckets + 144] - 1) < 1e-5)
+})
