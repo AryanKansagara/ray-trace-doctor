@@ -23,6 +23,21 @@ export const DEFAULTS: Settings = {
   job: '',
 }
 
+export const MAX_TEXT = 500
+
+// The numbers the settings panel accepts. 0 slots means infer.
+const ALLOWED: { [K in keyof Settings as Settings[K] extends number ? K : never]: (v: number) => boolean } = {
+  gpusPerWorker: (v) => v >= 0.1,
+  slots: (v) => v === 0 || v >= 1,
+  stragglerK: (v) => v >= 1,
+  minGapMs: (v) => v >= 0,
+  targetTaskMs: (v) => v >= 1,
+}
+
+export type NumberKey = keyof typeof ALLOWED
+
+export const allowedOrDefault = (key: NumberKey, v: number): number => (Number.isFinite(v) && ALLOWED[key](v) ? v : DEFAULTS[key])
+
 // Unknown keys and wrong types are dropped: this reads attacker-controllable URLs.
 export function sanitize(input: unknown): Settings {
   const out = { ...DEFAULTS }
@@ -31,9 +46,8 @@ export function sanitize(input: unknown): Settings {
   for (const key of Object.keys(DEFAULTS) as (keyof Settings)[]) {
     const v = src[key]
     if (typeof v !== typeof DEFAULTS[key]) continue
-    if (typeof v === 'number' && !(Number.isFinite(v) && v >= 0)) continue
-    if (typeof v === 'string' && v.length > 500) continue
-    ;(out as Record<string, unknown>)[key] = v
+    if (typeof v === 'string' && v.length > MAX_TEXT) continue
+    ;(out as Record<string, unknown>)[key] = typeof v === 'number' ? allowedOrDefault(key as NumberKey, v) : v
   }
   return out
 }

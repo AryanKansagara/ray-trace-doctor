@@ -4,7 +4,7 @@ import { fmtS, type Diagnosis } from './engine/analyze.ts'
 import { incomplete, type Trace } from './engine/build.ts'
 import { compare } from './engine/compare.ts'
 import { reportHtml, reportJson } from './engine/report.ts'
-import { decodeSettings, DEFAULTS, encodeSettings, sanitize, type Settings } from './engine/settings.ts'
+import { allowedOrDefault, decodeSettings, DEFAULTS, encodeSettings, MAX_TEXT, sanitize, type Settings } from './engine/settings.ts'
 import { FIXED, SAMPLES, STRESS, useSession, type Sample } from './session.ts'
 import { CompareView, Distributions, Flame, Heatmap, Legend, TypeTable, UtilChart } from './ui/Charts.tsx'
 import { Timeline, type TimelineHandle } from './ui/Timeline.tsx'
@@ -119,13 +119,13 @@ function SettingsPanel({ s, set, jobs }: { s: Settings; set: (p: Partial<Setting
   return (
     <div className="settings">
       <div className="settings-grid">
-        <Field label="GPU task types" hint="Comma-separated, matched against task names. The trace does not record GPUs."><input value={s.gpuPatterns} placeholder="EmbedModel, infer" onChange={(e) => set({ gpuPatterns: e.target.value })} /></Field>
-        <Field label="GPU node labels" hint="Actors on matching nodes count as GPU workers."><input value={s.gpuNodes} placeholder="10.0.0.5" onChange={(e) => set({ gpuNodes: e.target.value })} /></Field>
-        <Field label="GPUs per worker"><input type="number" min={0.1} step={0.5} value={s.gpusPerWorker} onChange={(e) => set({ gpusPerWorker: Number(e.target.value) || 1 })} /></Field>
-        <Field label="Worker slots" hint="0 infers from peak concurrency. Set your real CPU + GPU count for sharper numbers."><input type="number" min={0} value={s.slots} onChange={(e) => set({ slots: Math.max(0, Number(e.target.value) || 0) })} /></Field>
-        <Field label="Straggler cutoff" hint="Modified z-score. 3.5 is the textbook value."><input type="number" min={1} step={0.5} value={s.stragglerK} onChange={(e) => set({ stragglerK: Number(e.target.value) || 3.5 })} /></Field>
-        <Field label="Shortest gap counted (ms)"><input type="number" min={0} value={s.minGapMs} onChange={(e) => set({ minGapMs: Math.max(0, Number(e.target.value) || 0) })} /></Field>
-        <Field label="Target task size (ms)" hint="Batch sizes in the too-small card aim for this."><input type="number" min={1} value={s.targetTaskMs} onChange={(e) => set({ targetTaskMs: Number(e.target.value) || 100 })} /></Field>
+        <Field label="GPU task types" hint="Comma-separated, matched against task names. The trace does not record GPUs."><input maxLength={MAX_TEXT} value={s.gpuPatterns} placeholder="EmbedModel, infer" onChange={(e) => set({ gpuPatterns: e.target.value })} /></Field>
+        <Field label="GPU node labels" hint="Actors on matching nodes count as GPU workers."><input maxLength={MAX_TEXT} value={s.gpuNodes} placeholder="10.0.0.5" onChange={(e) => set({ gpuNodes: e.target.value })} /></Field>
+        <Field label="GPUs per worker"><input type="number" min={0.1} step={0.5} value={s.gpusPerWorker} onChange={(e) => set({ gpusPerWorker: allowedOrDefault('gpusPerWorker', Number(e.target.value)) })} /></Field>
+        <Field label="Worker slots" hint="0 infers from peak concurrency. Set your real CPU + GPU count for sharper numbers."><input type="number" min={0} value={s.slots} onChange={(e) => set({ slots: allowedOrDefault('slots', Number(e.target.value)) })} /></Field>
+        <Field label="Straggler cutoff" hint="Modified z-score. 3.5 is the textbook value."><input type="number" min={1} step={0.5} value={s.stragglerK} onChange={(e) => set({ stragglerK: allowedOrDefault('stragglerK', Number(e.target.value)) })} /></Field>
+        <Field label="Shortest gap counted (ms)"><input type="number" min={0} value={s.minGapMs} onChange={(e) => set({ minGapMs: allowedOrDefault('minGapMs', Math.max(0, Number(e.target.value))) })} /></Field>
+        <Field label="Target task size (ms)" hint="Batch sizes in the too-small card aim for this."><input type="number" min={1} value={s.targetTaskMs} onChange={(e) => set({ targetTaskMs: allowedOrDefault('targetTaskMs', Number(e.target.value)) })} /></Field>
         {(jobs.length > 1 || s.job) && (
           <Field label="Job" hint="ray timeline dumps the whole cluster.">
             <select value={s.job} onChange={(e) => set({ job: e.target.value })}>
