@@ -45,6 +45,7 @@ export interface Trace {
   submits: Float64Array
   submitDur: Float64Array
   submitWorker: Int32Array
+  submitsMixed: boolean // a job filter is on and some of these may belong to a job it hides
   issues: Issue[]
 }
 
@@ -196,6 +197,7 @@ export function buildTrace(raw: Raw, name = 'trace', onlyJob?: string): Trace {
   }
   order.sort((a, b) => raw.ts[rowOf[a]] - raw.ts[rowOf[b]])
   const n = order.length
+  const hidden = n < total
 
   let t0 = Infinity
   let tEnd = -Infinity
@@ -254,6 +256,9 @@ export function buildTrace(raw: Raw, name = 'trace', onlyJob?: string): Trace {
     submitWorker[i] = raw.worker[r]
   })
 
+  // Submissions carry no job, so next to hidden tasks they may be another job's.
+  const submitsMixed = hidden && sub.length > 0
+
   // Nodes and workers. pid is the node IP in `ray timeline`, an index plus metadata in dashboard dumps.
   const nodeIds = new Map<string, number>()
   const nodes: Trace['nodes'] = []
@@ -298,12 +303,19 @@ export function buildTrace(raw: Raw, name = 'trace', onlyJob?: string): Trace {
     if (l) l.push(submits[i])
     else subsByWorker.set(submitWorker[i], [submits[i]])
   }
+  // Ray gives each job its own worker processes. If a worker also ran hidden tasks, its submissions may be theirs.
+  const sharedWorker = new Uint8Array(raw.workers.length)
+  if (hidden) {
+    const shown = new Uint8Array(total)
+    for (const s of order) shown[s] = 1
+    for (let s = 0; s < total; s++) if (!shown[s]) sharedWorker[raw.worker[rowOf[s]]] = 1
+  }
   let nested = 0
   let nestedSeconds = 0
   for (let i = 0; i < n; i++) {
     const times = subsByWorker.get(out.worker[i])
     const ty = types[out.type[i]]
-    if (!times || ty.system || ty.lifecycle) continue // actor constructors make one-off internal calls
+    if (!times || sharedWorker[out.worker[i]] || ty.system || ty.lifecycle) continue // actor constructors make one-off internal calls
     let lo = 0
     let hi = times.length
     while (lo < hi) {
@@ -321,7 +333,8 @@ export function buildTrace(raw: Raw, name = 'trace', onlyJob?: string): Trace {
   for (const [cat, c] of Object.entries(raw.otherCats)) add(`other-${cat}`, 'info', `Spans in category "${cat}" (for example ray.profile) are not task phases and were not analyzed.`, c)
   if (total >= 99_000 && total <= 101_000) add('gcs-cap', 'warning', `About ${total.toLocaleString('en-US')} tasks: suspiciously close to Ray's default GCS cap on stored task events (RAY_task_events_max_num_task_in_gcs, 100000). Older tasks may have been evicted, so the start of this job could be missing.`)
   const realSubmit = sub.length
-  if (realSubmit && realSubmit < total * 0.5) add('few-submits', 'info', `${realSubmit} submit_task spans for ${total} tasks. Most work was submitted without a span (Ray Data does this), so queue depth cannot be read from submissions here; backlog is inferred from stage saturation instead.`)
+  if (submitsMixed) add('job-submits', 'info', `submit_task spans carry no job ID, so the ones here may belong to jobs the filter hides. Queue depth is not read from them; backlog is inferred from stage saturation instead.`)
+  else if (realSubmit && realSubmit < total * 0.5) add('few-submits', 'info', `${realSubmit} submit_task spans for ${total} tasks. Most work was submitted without a span (Ray Data does this), so queue depth cannot be read from submissions here; backlog is inferred from stage saturation instead.`)
 
   const jobs = [...jobCount.entries()].map(([id, tasks]) => ({ id, tasks })).sort((a, b) => b.tasks - a.tasks)
   if (jobs.length > 1 && !onlyJob) add('multi-job', 'warning', `This trace holds ${jobs.length} jobs: \`ray timeline\` dumps the whole cluster. Gaps between jobs look like idle time, so pick one job in settings.`)
@@ -341,6 +354,7 @@ export function buildTrace(raw: Raw, name = 'trace', onlyJob?: string): Trace {
     submits,
     submitDur,
     submitWorker,
+    submitsMixed,
     issues,
   }
 }

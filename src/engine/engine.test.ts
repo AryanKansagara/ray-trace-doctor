@@ -177,6 +177,36 @@ test('multi-job dumps warn, and a job filter restricts the analysis', () => {
   assert.ok(!buildTrace(raw, 'x', '02000000').issues.some((i) => i.code === 'job-missing'))
 })
 
+test('with a job filter, submissions that may be another job\'s are not its queue or its nested tasks', async () => {
+  const sec = (cat: string, tid: string, ts: number, dur: number, id?: number) => span(cat, tid, ts * 1e6, dur * 1e6, id)
+  const mine = (cat: string, tid: string, ts: number, dur: number, id: number) => ({ ...sec(cat, tid, ts, dur), args: { task_id: ID(id).replace(/01000000$/, '02000000') } })
+  const one = Array.from({ length: 40 }, (_, i) => [sec('submit_task', 'driver:1', i * 0.01, 0.001), sec('task::a', `worker:${i % 4}`, 1 + Math.floor(i / 4), 0.9, i + 1)]).flat()
+  const two = Array.from({ length: 40 }, (_, i) => [sec('submit_task', 'driver:2', 19.99 + i * 0.5, 0.001), mine('task::b', `worker:${10 + (i % 2)}`, 20 + i * 0.5, 0.5, 100 + i)]).flat()
+  const run = async (events: unknown[], job?: string) => {
+    const trace = buildTrace(await parseStream(streamOf(asBytes(events))), 'x', job)
+    return { trace, a: analyze(trace, { ...DEFAULTS, slots: 4 }) }
+  }
+  const both = await run([...one, ...two], '02000000')
+  assert.equal(both.a.summary.tasks, 40)
+  assert.equal(both.a.summary.backlogKnown, false)
+  assert.equal(both.a.util.backlog, null)
+  assert.ok(!kinds(both.a).includes('idle-while-work'))
+  assert.match(both.trace.issues.find((i) => i.code === 'job-submits')!.message, /stage saturation/)
+  // Job 2 on its own: its submissions never outrun its starts. Filtering a single-job trace changes nothing.
+  for (const job of [undefined, '02000000']) {
+    const alone = await run(two, job)
+    assert.equal(alone.a.summary.backlogKnown, true)
+    assert.ok(!kinds(alone.a).includes('idle-while-work'))
+    assert.ok(!alone.trace.issues.some((i) => i.code === 'job-submits'))
+  }
+  // Job 1 submits from a worker at 5 s, the moment its task ends and job 2's starts.
+  const nested = (events: unknown[], job: string) => run(events, job).then((r) => r.trace.issues.find((i) => i.code === 'nested-tasks')?.count)
+  const shared = [sec('task::a', 'worker:p', 0, 5, 1), sec('submit_task', 'worker:p', 5, 0.001), mine('task::b', 'worker:p', 5, 5, 2)]
+  assert.equal(await nested(shared, '02000000'), undefined)
+  // A worker that only ran this job's tasks still shows its own nested submissions.
+  assert.equal(await nested([sec('task::a', 'worker:1', 0, 5, 1), mine('task::b', 'worker:2', 5, 5, 2), sec('submit_task', 'worker:2', 6, 0.001)], '02000000'), 1)
+})
+
 test('a job filter for a job this trace does not have is reported and not applied', () => {
   const p = new TraceParser()
   p.push(asBytes([...task('a', 'worker:1', 0, 1000, 1), ...task('a', 'worker:1', 2000, 1000, 2)]))
